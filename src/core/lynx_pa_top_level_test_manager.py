@@ -606,21 +606,12 @@ class PaTopLevelTestManager:
 if __name__ == "__main__":
     manager = PaTopLevelTestManager(sim=False)
 
-    import os 
+    profile = {
+        "steps": [
+            {
+                "name"
+            }
+        ]
+    }
 
-    def query_user_for_path():
-        for i, pth in enumerate(manager.paths):
-            logger.info("%d %s", i, pth)
-        selection = input("SELECT PATH")
-        logger.info("You have selected > %s", selection)
-        answer = input("Are you sure? y/n")
-        if answer.lower() == "y":
-            return selection
-        else:
-            os.system("cls")
-            return query_user_for_path()
-
-    selection = query_user_for_path()
-
-
-    manager.run_and_process_tests(path=manager.paths[int(selection)], sno="", sig_a_tests=False, na_tests=True, golden_tests=False)
+    manager.run_and_process_tests(path=manager.paths[0], sno="", sig_a_tests=False, na_tests=True, golden_tests=False)
