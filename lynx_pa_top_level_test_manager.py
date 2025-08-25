@@ -7,24 +7,21 @@ from instruments.temp_probe import Agilent34401A
 from instruments.signal_analyzer import MXASignalAnalyzer
 from instruments.network_analyzer import PNAXNetworkAnalyzer
 from instruments.ztm import ZtmModular  
-from instruments.AIOUSB.aiousb import Aiousb
 from instruments.daq import RS422_DAQ
 from configs.scribe import Scribe
-from mocked_test_class import MockedTest
-from logging_utils import log_message, configure_logging, log_queue
-# from logging_utils import log_message, configure_logging
 import logging
 import time
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 class PaTopLevelTestManager:
+    
     def __init__(self, sim) -> None:
         self.instruments_connection = {"rfpm1_input": True, "rfpm2_output": True, "rfsg": True, "rfsa": True, "na": True, "temp_probe": True, "daq": True}
         if not sim:
             self.rm = pyvisa.ResourceManager()
             self.instruments = self.rm.list_resources()
-            log_message(self.instruments)
+            logger.info("Discovered VISA resources: %s", self.instruments)
             self.running_state = False
             self.state = False
 
@@ -32,74 +29,73 @@ class PaTopLevelTestManager:
             
             try:
                 self.rfpm1 = E4418BPowerMeter("GPIB0::14::INSTR", name="rfpm1")
-                log_message("POWER METER 1 OUtSPUT CONNECTED")
+                logger.info("POWER METER 1 OUtSPUT CONNECTED")
             except:
                 self.instruments_connection["rfpm1"] = False
 
             try:
                 self.rfpm2 = E4418BPowerMeter("GPIB0::16::INSTR", name="rfpm2")
-                log_message("POWER METER 2 input CONNECTED")
+                logger.info("POWER METER 2 input CONNECTED")
             except: 
                 self.instruments_connection["rfpm2"] = False
 
 
             try:
                 self.rfsg = E4438CSignalGenerator("GPIB0::30::INSTR")
-                log_message("RFSg CONNECTED")
+                logger.info("RFSg CONNECTED")
             except Exception as e:
-                log_message(e)
-                log_message("RFSg NOT CONNECTED")
                 self.instruments_connection["rfsg"] = False
+                logger.warning("RFSg NOT CONNECTED: %s", e, exc_info=True)
 
             try:
                 self.rfsa = MXASignalAnalyzer("TCPIP0::K-N90X0A-000005.local::hislip0::INSTR")
-                log_message("RFSa CONNECTED")
+                logger.info("RFSa CONNECTED")
             except Exception as e:
-                log_message(e)
                 self.instruments_connection["rfsa"] = False
-                log_message("RFSa NOt CONNECTED")
+                logger.warning("RFSa NOT CONNECTED: %s", e, exc_info=True)
 
             try:
                 self.na = PNAXNetworkAnalyzer("TCPIP0::K-Instr0000.local::hislip0::INSTR")
-                log_message("NA CONNECTED")
+                logger.info("NA CONNECTED")
             except:
                 self.instruments_connection["na"] = False
-                log_message("NA NOT connected")
+                logger.warning("NA NOT connected")
 
             try:
 
                 self.temp_probe = Agilent34401A("GPIB0::29::INSTR")
-                log_message("TEMP PROBE 1 CONNECTED")
+                logger.info("TEMP PROBE 1 CONNECTED")
             except:
-                log_message("Failed to connect to temp probe")
                 self.instruments_connection["temp_probe"] = False
+                logger.warning("Failed to connect to temp probe 1")
 
             try:
                 self.temp_probe2 = Agilent34401A("GPIB0::22::INSTR")
             except:
-                log_message("Failed to connect to temp probe 2")
-                log_message("TEMP PROBE 2 CONNECTED")
+                logger.warning("Failed to connect to temp probe 2")
                 self.instruments_connection["temp_probe2"] = False
 
             try:
                 self.power_supply = PowerSupply(visa_address="GPIB0::10::INSTR")
             except:
                 self.instruments_connection["power_supply"] = False
+                logger.warning("Power Supply NOT connected")
 
             try:
                 self.daq = RS422_DAQ()
             except:
-                log_message("FAILED TO CONNECT TO AIOUSB")
+                logger.warning("FAILED TO CONNECT TO AIOUSB")
                 self.instruments_connection["daq"] = False
+                logger.warning("DAQ (AIOUSB) NOT connected")
 
             try:
                 self.switch_bank = ZtmModular()
                 self.switch_bank.init_resource("02402230028")
                 self.switch_bank.reset_all_switches()
             except Exception as e:
-                log_message(e)
-                log_message("Failed to connect to switch bank")
+                logger.warning("Failed to connect to switch bank: %s", e, exc_info=True)
                 self.instruments_connection["switch_bank"] = False
+                logger.warning("Switch bank NOT connected")
 
             from configs.configs import LynxPaConfig
 
@@ -129,6 +125,7 @@ class PaTopLevelTestManager:
             ]
 
             self.scribe = Scribe("LYNX_PA")
+            logger.info("Instrument connectivity summary: %s", self.instruments_connection)
 
     def process_and_write_module_na_data(self, gain_bucket, phase_bucket, switchpath, ratioed_power):
         freqs = gain_bucket[0]["freqs"]
@@ -437,12 +434,14 @@ class PaTopLevelTestManager:
         
 
     def clean_up(self):
+        logger.info("Cleanup: disabling RF, stopping RFSG, resetting switches")
         self.daq.disable_rf()
         self.rfsg.stop()
         # self.power_supply.get_output_state(False)
         self.switch_bank.reset_all_switches()
 
     def run_state_process(self, path, gain_setting, measurement_type, options={}):
+        logger.info("run_state_process | path=%s | gain=%s | type=%s | options=%s", path, gain_setting, measurement_type, options)
         switchpath = self.lynx_config.paths[path][measurement_type]["switchpath"]
         if measurement_type == "Signal Analyzer Bandwidth":
             bandwidth = options["bandwidth"]
@@ -463,8 +462,10 @@ class PaTopLevelTestManager:
             self.na_test.recover_test_state(bandpath=bandpath, switchpath=switchpath, gain_setting=gain_setting, statefile_path=statefile_path)
 
     def run_and_process_tests(self, path, sno, sig_a_tests=False, na_tests=True, golden_tests=False, options={}):
+        logger.info("TestManager start | path=%s | S/N=%s | flags={sig_a=%s, na=%s, golden=%s}", path, sno, sig_a_tests, na_tests, golden_tests)
         if sig_a_tests:
             # Run SIG A tests
+            logger.info("SIG_A tests: starting")
             switchpath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["switchpath"]
             freqs = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["freqs"]
             attenuation_settings = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["attenuation_settings"]
@@ -556,6 +557,7 @@ class PaTopLevelTestManager:
 
         if na_tests:
             # 31 Steps of attenuation
+            logger.info("NA tests: starting")
             s21_gain_results_filepath = self.lynx_config.paths[path]["S21"]["gain_results_filepath"]
             s21_phase_results_filepath = self.lynx_config.paths[path]["S21"]["phase_results_filepath"]
             s21_statefilepath = self.lynx_config.paths[path]["S21"]["state_filepath"]
@@ -598,30 +600,27 @@ class PaTopLevelTestManager:
             gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath ,gain_setting=attenuation_setting, ratioed_power="S22", format="MLOG", statefilepath=s22_state_filepath)
             self.process_and_write_module_S_param(filepath=s22_results_filepath, bucket=gain, headers=True)
 
-
+        logger.info("TestManager end | path=%s", path)
         self.clean_up()
 
 if __name__ == "__main__":
-    manager = PaModuleTestManager(sim=False)
+    manager = PaTopLevelTestManager(sim=False)
 
     import os 
 
     def query_user_for_path():
-            
-        for i, path in enumerate(manager.paths):
-            log_message(i, " ", path)
-
-        select = input("SELECT PATH")
-        log_message(f"You have selected > {select}")
+        for i, pth in enumerate(manager.paths):
+            logger.info("%d %s", i, pth)
+        selection = input("SELECT PATH")
+        logger.info("You have selected > %s", selection)
         answer = input("Are you sure? y/n")
-
         if answer.lower() == "y":
-            return select
+            return selection
         else:
             os.system("cls")
-            query_user_for_path()
+            return query_user_for_path()
 
-    select = query_user_for_path()
+    selection = query_user_for_path()
 
 
-    manager.run_and_process_tests(switchpath=manager.paths[int(select)])
+    manager.run_and_process_tests(path=manager.paths[int(selection)], sno="", sig_a_tests=False, na_tests=True, golden_tests=False)
