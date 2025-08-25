@@ -1,5 +1,5 @@
 import pyvisa
-from lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
+from core.lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
 from instruments.power_meter import E4418BPowerMeter
 from instruments.power_supply import PowerSupply
 from instruments.signal_generator import E4438CSignalGenerator
