@@ -1,0 +1,910 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:Project xmlns:ns0="http://schemas.microsoft.com/developer/msbuild/2003">
+    <ns0:PropertyGroup>
+        <ns0:ProjectGuid>{52259F22-AE46-4426-A3A4-323150513637}</ns0:ProjectGuid>
+        <ns0:ProjectVersion>19.3</ns0:ProjectVersion>
+        <ns0:FrameworkType>None</ns0:FrameworkType>
+        <ns0:MainSource>AIOUSB.dpr</ns0:MainSource>
+        <ns0:Base>True</ns0:Base>
+        <ns0:Config Condition="'$(Config)'==''">Debug</ns0:Config>
+        <ns0:Platform Condition="'$(Platform)'==''">Win32</ns0:Platform>
+        <ns0:TargetedPlatforms>3</ns0:TargetedPlatforms>
+        <ns0:AppType>Library</ns0:AppType>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+        <ns0:Base_Win32>true</ns0:Base_Win32>
+        <ns0:CfgParent>Base</ns0:CfgParent>
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
+        <ns0:Base_Win64>true</ns0:Base_Win64>
+        <ns0:CfgParent>Base</ns0:CfgParent>
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_1)'!=''">
+        <ns0:Cfg_1>true</ns0:Cfg_1>
+        <ns0:CfgParent>Base</ns0:CfgParent>
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win32)'!=''">
+        <ns0:Cfg_1_Win32>true</ns0:Cfg_1_Win32>
+        <ns0:CfgParent>Cfg_1</ns0:CfgParent>
+        <ns0:Cfg_1>true</ns0:Cfg_1>
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
+        <ns0:Cfg_2>true</ns0:Cfg_2>
+        <ns0:CfgParent>Base</ns0:CfgParent>
+        <ns0:Base>true</ns0:Base>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Base)'!=''">
+        <ns0:VerInfo_IncludeVerInfo>true</ns0:VerInfo_IncludeVerInfo>
+        <ns0:VerInfo_AutoGenVersion>true</ns0:VerInfo_AutoGenVersion>
+        <ns0:VerInfo_Keys>CompanyName=ACCES I/O Products, Inc.;FileDescription=AIOUSB Driver Interface;FileVersion=2.4.0.0;InternalName=AIOUSB;LegalCopyright=Copyright © 2019;LegalTrademarks=;OriginalFilename=;ProductName=AIOUSB;ProductVersion=1.0.0.0;Comments=</ns0:VerInfo_Keys>
+        <ns0:Manifest_File>None</ns0:Manifest_File>
+        <ns0:VerInfo_MajorVer>2</ns0:VerInfo_MajorVer>
+        <ns0:VerInfo_MinorVer>4</ns0:VerInfo_MinorVer>
+        <ns0:VerInfo_Locale>1033</ns0:VerInfo_Locale>
+        <ns0:DCC_UsePackage>bindcompfmx;fmx;rtl;dbrtl;IndySystem;DbxClientDriver;bindcomp;inetdb;DBXInterBaseDriver;xmlrtl;ibxpress;DbxCommonDriver;IndyProtocols;DBXMySQLDriver;dbxcds;bindengine;FMXTee;soaprtl;dsnap;IndyCore;fmxase;CloudService;FmxTeeUI;inet;fmxobj;inetdbxpress;fmxdae;dbexpress;$(DCC_UsePackage)</ns0:DCC_UsePackage>
+        <ns0:DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</ns0:DCC_Namespace>
+        <ns0:GenDll>true</ns0:GenDll>
+        <ns0:DCC_DcuOutput>.\$(Platform)\$(Config)</ns0:DCC_DcuOutput>
+        <ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput>
+        <ns0:DCC_E>false</ns0:DCC_E>
+        <ns0:DCC_N>false</ns0:DCC_N>
+        <ns0:DCC_S>false</ns0:DCC_S>
+        <ns0:DCC_F>false</ns0:DCC_F>
+        <ns0:DCC_K>false</ns0:DCC_K>
+        <ns0:SanitizedProjectName>AIOUSB</ns0:SanitizedProjectName>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Base_Win32)'!=''">
+        <ns0:DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</ns0:DCC_Namespace>
+        <ns0:DCC_UsePackage>vcldbx;frx16;TeeDB;Rave100VCL;vclib;Tee;inetdbbde;svnui;vclimg;frxDB16;intrawebdb_120_160;fs16;TeeUI;vclactnband;vcldb;vcldsnap;bindcompvcl;vclie;vcltouch;Intraweb_120_160;websnap;vclribbon;frxe16;VclSmp;fsDB16;vcl;CodeSiteExpressPkg;dsnapcon;vclx;webdsnap;svn;bdertl;adortl;$(DCC_UsePackage)</ns0:DCC_UsePackage>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Base_Win64)'!=''">
+        <ns0:DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;$(DCC_Namespace)</ns0:DCC_Namespace>
+        <ns0:DCC_UsePackage>TeeDB;vclib;Tee;vclimg;TeeUI;vclactnband;vcldb;vcldsnap;bindcompvcl;vclie;vcltouch;websnap;vclribbon;VclSmp;vcl;dsnapcon;vclx;webdsnap;adortl;$(DCC_UsePackage)</ns0:DCC_UsePackage>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Cfg_1)'!=''">
+        <ns0:VerInfo_Debug>true</ns0:VerInfo_Debug>
+        <ns0:DCC_Define>DEBUG;$(DCC_Define)</ns0:DCC_Define>
+        <ns0:DCC_Optimize>false</ns0:DCC_Optimize>
+        <ns0:DCC_GenerateStackFrames>true</ns0:DCC_GenerateStackFrames>
+        <ns0:DCC_DebugInfoInExe>true</ns0:DCC_DebugInfoInExe>
+        <ns0:DCC_RemoteDebug>true</ns0:DCC_RemoteDebug>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
+        <ns0:Debugger_HostApplication>O:\Dev\Tools\AIOUSB\DLL\ThreadTestbed\Win32\Debug\AUTT.exe</ns0:Debugger_HostApplication>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:PropertyGroup Condition="'$(Cfg_2)'!=''">
+        <ns0:DCC_LocalDebugSymbols>false</ns0:DCC_LocalDebugSymbols>
+        <ns0:DCC_Define>RELEASE;$(DCC_Define)</ns0:DCC_Define>
+        <ns0:DCC_SymbolReferenceInfo>0</ns0:DCC_SymbolReferenceInfo>
+        <ns0:DCC_DebugInformation>0</ns0:DCC_DebugInformation>
+    <ns0:OutputDir>$(Platform)$(Config)</ns0:OutputDir><ns0:DCC_ExeOutput>$(Platform)$(Config)</ns0:DCC_ExeOutput></ns0:PropertyGroup>
+    <ns0:ItemGroup>
+        <ns0:DelphiCompile Include="$(MainSource)">
+            <ns0:MainSource>MainSource</ns0:MainSource>
+        </ns0:DelphiCompile>
+        <ns0:DCCReference Include="SetupDi.pas" />
+        <ns0:DCCReference Include="WinUSB.pas" />
+        <ns0:DCCReference Include="ContBufThreads.pas" />
+        <ns0:DCCReference Include="TheseUtils.pas" />
+        <ns0:DCCReference Include="CoreExports.pas" />
+        <ns0:BuildConfiguration Include="Base">
+            <ns0:Key>Base</ns0:Key>
+        </ns0:BuildConfiguration>
+        <ns0:BuildConfiguration Include="Debug">
+            <ns0:Key>Cfg_1</ns0:Key>
+            <ns0:CfgParent>Base</ns0:CfgParent>
+        </ns0:BuildConfiguration>
+        <ns0:BuildConfiguration Include="Release">
+            <ns0:Key>Cfg_2</ns0:Key>
+            <ns0:CfgParent>Base</ns0:CfgParent>
+        </ns0:BuildConfiguration>
+    </ns0:ItemGroup>
+    <ns0:ProjectExtensions>
+        <ns0:Borland.Personality>Delphi.Personality.12</ns0:Borland.Personality>
+        <ns0:Borland.ProjectType />
+        <ns0:BorlandProject>
+            <ns0:Delphi.Personality>
+                <ns0:VersionInfo>
+                    <ns0:VersionInfo Name="IncludeVerInfo">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="AutoIncBuild">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="MajorVer">1</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="MinorVer">0</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Release">0</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Build">0</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Debug">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="PreRelease">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Special">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Private">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="DLL">False</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="Locale">1033</ns0:VersionInfo>
+                    <ns0:VersionInfo Name="CodePage">1252</ns0:VersionInfo>
+                </ns0:VersionInfo>
+                <ns0:VersionInfoKeys>
+                    <ns0:VersionInfoKeys Name="CompanyName" />
+                    <ns0:VersionInfoKeys Name="FileDescription" />
+                    <ns0:VersionInfoKeys Name="FileVersion">1.0.0.0</ns0:VersionInfoKeys>
+                    <ns0:VersionInfoKeys Name="InternalName" />
+                    <ns0:VersionInfoKeys Name="LegalCopyright" />
+                    <ns0:VersionInfoKeys Name="LegalTrademarks" />
+                    <ns0:VersionInfoKeys Name="OriginalFilename" />
+                    <ns0:VersionInfoKeys Name="ProductName" />
+                    <ns0:VersionInfoKeys Name="ProductVersion">1.0.0.0</ns0:VersionInfoKeys>
+                    <ns0:VersionInfoKeys Name="Comments" />
+                </ns0:VersionInfoKeys>
+                <ns0:Source>
+                    <ns0:Source Name="MainSource">AIOUSB.dpr</ns0:Source>
+                </ns0:Source>
+                <ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\system32\Mitov.BasicLab.Delphi.Design.D16.bpl">Mitov - SignalLab Basic Design Package</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\system32\Mitov.Delphi.Design.D16.bpl">Mitov Design Time</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\System32\SignalLabFilterDesignDsnD16.bpl">Mitov - SignalLab Filter Design Package</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\System32\SignalLabDsnD16.bpl">Mitov - SignalLab Design Package</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\System32\SLBasicVisualizersDsnD16.bpl">Mitov - Basic Debug Visualizer</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\System32\SLBufferVisualizersDsnD16.bpl">Mitov - SignalLab Buffer Debug Visualizer</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\System32\OpenWireBindingDsnD16.bpl">Mitov - OpenWire Live Bindings (Design Time)</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="C:\WINDOWS\system32\OpenWireEditorDsnD16.bpl">Mitov - OpenWire Editor</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="$(BDSBIN)\dcloffice2k160.bpl">Microsoft Office 2000 Sample Automation Server Wrapper Components</ns0:Excluded_Packages>
+                    <ns0:Excluded_Packages Name="$(BDSBIN)\dclofficexp160.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</ns0:Excluded_Packages>
+                </ns0:Excluded_Packages>
+            </ns0:Delphi.Personality>
+            <ns0:Deployment Version="3">
+                <ns0:DeployFile LocalName="$(BDS)\Redist\iossimulator\libpcre.dylib" Class="DependencyModule">
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Overwrite>true</ns0:Overwrite>
+                    </ns0:Platform>
+                </ns0:DeployFile>
+                <ns0:DeployFile LocalName="$(BDS)\Redist\osx32\libcgunwind.1.0.dylib" Class="DependencyModule">
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Overwrite>true</ns0:Overwrite>
+                    </ns0:Platform>
+                </ns0:DeployFile>
+                <ns0:DeployFile LocalName="$(BDS)\Redist\iossimulator\libcgunwind.1.0.dylib" Class="DependencyModule">
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Overwrite>true</ns0:Overwrite>
+                    </ns0:Platform>
+                </ns0:DeployFile>
+                <ns0:DeployClass Name="AdditionalDebugSymbols">
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidClasses">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>classes</ns0:RemoteDir>
+                        <ns0:Operation>64</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>classes</ns0:RemoteDir>
+                        <ns0:Operation>64</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidClassesDexFile">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>classes</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>classes</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidFileProvider">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\xml</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\xml</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidGDBServer">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidLibnativeArmeabiFile">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>library\lib\armeabi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\armeabi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidLibnativeArmeabiv7aFile">
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidLibnativeMipsFile">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>library\lib\mips</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\mips</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidServiceOutput">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\arm64-v8a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidServiceOutput_Android32">
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidSplashImageDef">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidSplashStyles">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="AndroidSplashStylesV21">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\values-v21</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\values-v21</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_Colors">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_DefaultAppIcon">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon144">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon192">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xxxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xxxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon36">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-ldpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-ldpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon48">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-mdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-mdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon72">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-hdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-hdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_LauncherIcon96">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_NotificationIcon24">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-mdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-mdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_NotificationIcon36">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-hdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-hdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_NotificationIcon48">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_NotificationIcon72">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_NotificationIcon96">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xxxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xxxhdpi</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_SplashImage426">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-small</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-small</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_SplashImage470">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-normal</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-normal</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_SplashImage640">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-large</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-large</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_SplashImage960">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\drawable-xlarge</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\drawable-xlarge</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="Android_Strings">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>res\values</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="DebugSymbols">
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="DependencyFramework">
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.framework</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.framework</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.framework</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="DependencyModule">
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                        <ns0:Extensions>.dll;.bpl</ns0:Extensions>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Required="true" Name="DependencyPackage">
+                    <ns0:Platform Name="iOSDevice32">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:Operation>1</ns0:Operation>
+                        <ns0:Extensions>.dylib</ns0:Extensions>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                        <ns0:Extensions>.bpl</ns0:Extensions>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="File">
+                    <ns0:Platform Name="Android">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iOS_AppStore1024">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_AppIcon152">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_AppIcon167">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_Launch2x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_LaunchDark2x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_Notification40">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_Setting58">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPad_SpotLight80">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_AppIcon120">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_AppIcon180">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Launch2x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Launch3x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_LaunchDark2x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_LaunchDark3x">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\LaunchScreenImage.imageset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Notification40">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Notification60">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Setting58">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Setting87">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Spotlight120">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="iPhone_Spotlight80">
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).launchscreen\Assets\AppIcon.appiconset</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectAndroidManifest">
+                    <ns0:Platform Name="Android">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectiOSDeviceDebug">
+                    <ns0:Platform Name="iOSDevice32">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).app.dSYM\Contents\Resources\DWARF</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:RemoteDir>..\$(PROJECTNAME).app.dSYM\Contents\Resources\DWARF</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectiOSEntitlements" />
+                <ns0:DeployClass Name="ProjectiOSInfoPList" />
+                <ns0:DeployClass Name="ProjectiOSLaunchScreen" />
+                <ns0:DeployClass Name="ProjectiOSResource">
+                    <ns0:Platform Name="iOSDevice32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectOSXDebug" />
+                <ns0:DeployClass Name="ProjectOSXEntitlements" />
+                <ns0:DeployClass Name="ProjectOSXInfoPList" />
+                <ns0:DeployClass Name="ProjectOSXResource">
+                    <ns0:Platform Name="OSX32">
+                        <ns0:RemoteDir>Contents\Resources</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:RemoteDir>Contents\Resources</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:RemoteDir>Contents\Resources</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Required="true" Name="ProjectOutput">
+                    <ns0:Platform Name="Android">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\arm64-v8a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSDevice64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="iOSSimulator">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Linux64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSX64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="OSXARM64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>0</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectOutput_Android32">
+                    <ns0:Platform Name="Android64">
+                        <ns0:RemoteDir>library\lib\armeabi-v7a</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="ProjectUWPManifest">
+                    <ns0:Platform Name="Win32">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win64">
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="UWP_DelphiLogo150">
+                    <ns0:Platform Name="Win32">
+                        <ns0:RemoteDir>Assets</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win64">
+                        <ns0:RemoteDir>Assets</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:DeployClass Name="UWP_DelphiLogo44">
+                    <ns0:Platform Name="Win32">
+                        <ns0:RemoteDir>Assets</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                    <ns0:Platform Name="Win64">
+                        <ns0:RemoteDir>Assets</ns0:RemoteDir>
+                        <ns0:Operation>1</ns0:Operation>
+                    </ns0:Platform>
+                </ns0:DeployClass>
+                <ns0:ProjectRoot Platform="OSX32" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="OSX64" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="Win32" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="Android64" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="Android" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="Win64" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="OSXARM64" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="iOSDevice32" Name="$(PROJECTNAME).app" />
+                <ns0:ProjectRoot Platform="iOSDevice64" Name="$(PROJECTNAME).app" />
+                <ns0:ProjectRoot Platform="Linux64" Name="$(PROJECTNAME)" />
+                <ns0:ProjectRoot Platform="iOSSimulator" Name="$(PROJECTNAME).app" />
+            </ns0:Deployment>
+            <ns0:Platforms>
+                <ns0:Platform value="Win32">True</ns0:Platform>
+                <ns0:Platform value="Win64">True</ns0:Platform>
+            </ns0:Platforms>
+            <ns0:ModelSupport>False</ns0:ModelSupport>
+        </ns0:BorlandProject>
+        <ns0:ProjectFileVersion>12</ns0:ProjectFileVersion>
+    </ns0:ProjectExtensions>
+    <ns0:Import Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')" Project="$(BDS)\Bin\CodeGear.Delphi.Targets" />
+    <ns0:Import Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')" Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" />
+    <ns0:Import Project="$(MSBuildProjectName).deployproj" Condition="Exists('$(MSBuildProjectName).deployproj')" />
+</ns0:Project>

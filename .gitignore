@@ -1,0 +1,35 @@
+data/
+*.pyc
+dist/
+build/
+.venv/
+
+# Data files
+*.csv
+*.json
+*.xml
+*.xlsx
+*.xls
+*.txt
+*.log
+*.dat
+*.bin
+*.h5
+*.hdf5
+*.parquet
+*.pickle
+*.pkl
+*.npy
+*.npz
+*.mat
+*.db
+*.sqlite
+*.sqlite3
+
+# Data directories
+**/data/
+**/logs/
+**/output/
+**/results/
+**/tmp/
+**/temp/
