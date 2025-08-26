@@ -145,7 +145,7 @@ def run_gui():  # pragma: no cover - convenience entrypoint
 
     app = QtWidgets.QApplication(sys.argv)
     # Use simulation mode by default for development
-    manager = LynxThermalCycleManager(simulation_mode=True)
+    manager = LynxThermalCycleManager(simulation_mode=False)
     win = LiveWindow(manager)
     win.show()
     sys.exit(app.exec_())

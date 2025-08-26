@@ -11,6 +11,8 @@ from instruments.ztm import ZtmModular
 from instruments.signal_analyzer import MXASignalAnalyzer
 from instruments.network_analyzer import PNAXNetworkAnalyzer
 from instruments.AIOUSB.aiousb import Aiousb
+from instruments.daq import RS422_DAQ
+from instruments.simulated_daq import SimulatedRS422_DAQ
 from configs.calibration import Calibration
 from configs.scribe import Scribe
 from configs.configs import LynxPaConfig
@@ -64,12 +66,11 @@ class SignalAnalyzerTest(RfTest):
         else:
             raise TypeError()
         
-
-        if isinstance(daq, RS422_DAQ):
+        if isinstance(daq, RS422_DAQ) or isinstance(daq, SimulatedRS422_DAQ):
             self.daq = daq
         else:
             raise TypeError
-        
+
         if isinstance(temp_probe, Agilent34401A):
             self.temp_probe = temp_probe
         else:
@@ -105,7 +106,7 @@ class NetworkAnalyzerTest(RfTest):
         else:
             raise TypeError()
         
-        if isinstance(daq, RS422_DAQ):
+        if isinstance(daq, RS422_DAQ) or isinstance(daq, SimulatedRS422_DAQ):
             self.daq = daq
         else:
             raise TypeError
