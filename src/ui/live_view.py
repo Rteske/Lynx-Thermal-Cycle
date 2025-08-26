@@ -11,7 +11,7 @@ from src.utils.logging_utils import log_queue
 
 def run_gui():  # pragma: no cover - convenience entrypoint
     try:
-        from PyQt5 import QtCore, QtGui, QtWidgets  # type: ignore
+        from PyQt5 import QtCore, QtWidgets  # type: ignore
         import pyqtgraph as pg  # type: ignore
     except (ImportError, ModuleNotFoundError):
         print("PyQt5/pyqtgraph not installed. Install with: pip install PyQt5 pyqtgraph")
@@ -54,6 +54,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.curve_setpoint = self.plot.plot(pen=pg.mkPen('m', style=QtCore.Qt.DotLine), name='Setpoint')
             self.curve_v = self.plot.plot(pen=pg.mkPen('g', width=1), name='PSU V')
             self.curve_c = self.plot.plot(pen=pg.mkPen('r', width=1), name='PSU A')
+            self.curve_tc1 = self.plot.plot(pen=pg.mkPen(color=(255, 165, 0), width=1), name='TC1 C')
+            self.curve_tc2 = self.plot.plot(pen=pg.mkPen(color=(173, 216, 230), width=1), name='TC2 C')
 
             # Log viewer
             self.log_view = QTextEditLogger(self)
@@ -76,6 +78,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.setpoint: List[Optional[float]] = []
             self.v: List[Optional[float]] = []
             self.c: List[Optional[float]] = []
+            self.tc1: List[Optional[float]] = []
+            self.tc2: List[Optional[float]] = []
 
             # Telemetry signal model
             self.model = LiveTelemetryModel()
@@ -119,6 +123,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.setpoint.append(to_num(payload.get('setpoint_c')))
             self.v.append(to_num(payload.get('psu_voltage')))
             self.c.append(to_num(payload.get('psu_current')))
+            self.tc1.append(to_num(payload.get('tc1_temp')))
+            self.tc2.append(to_num(payload.get('tc2_temp')))
 
             # Update curves with non-None filtering
             def clean(data):
@@ -129,6 +135,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.curve_setpoint.setData(self.t, clean(self.setpoint))
             self.curve_v.setData(self.t, clean(self.v))
             self.curve_c.setData(self.t, clean(self.c))
+            self.curve_tc1.setData(self.t, clean(self.tc1))
+            self.curve_tc2.setData(self.t, clean(self.tc2))
 
             # Status text
             phase = payload.get('phase', '')

@@ -121,6 +121,16 @@ class LynxThermalCycleManager:
         except (SerialException, ValueError, OSError):
             return None
 
+    def _tcs_within_band(self, target_c: float, tol_c: float) -> tuple[bool, int, list[float]]:
+        """Check if available thermocouples are within target±tol.
+        Returns (all_ok, count_present, values_present). If no TCs present, (False, 0, [])."""
+        tc1, tc2 = self._get_tc_snapshot()
+        vals: list[float] = [float(v) for v in (tc1, tc2) if isinstance(v, (int, float))]
+        if not vals:
+            return False, 0, []
+        all_ok = all(abs(v - target_c) <= tol_c for v in vals)
+        return all_ok, len(vals), vals
+
     def _wait_until_stable(self, target_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int):
         # Initial wait before monitoring
         if initial_delay_s and initial_delay_s > 0:
@@ -130,9 +140,10 @@ class LynxThermalCycleManager:
             while time.time() < end:
                 self._maybe_log_telemetry(phase="stabilize")
                 time.sleep(min(5, initial_delay_s))
-        if self.temp_controller is None:
-            # Fallback: just sleep the window if no controller to poll
-            log_message(f"[SIM] No temp feedback; sleeping {window_s}s as stability window")
+        # If no thermocouples and no controller, fallback to timed wait
+        _, tc_count, _ = self._tcs_within_band(target_c, tol_c)
+        if tc_count == 0 and self.temp_controller is None:
+            log_message(f"[SIM] No temperature feedback; sleeping {window_s}s as stability window")
             end = time.time() + window_s
             while time.time() < end:
                 self._maybe_log_telemetry(phase="stabilize")
@@ -141,22 +152,34 @@ class LynxThermalCycleManager:
 
         end_required = time.time() + window_s
         while True:
-            curr = self._read_actual_temp()
-            if curr is not None:
-                delta = abs(curr - target_c)
-                log_message(f"Temp read {curr:.2f} C (target {target_c:.2f} C, |Δ|={delta:.2f} C, tol={tol_c:.2f} C)")
-                if delta <= tol_c:
-                    # Within tolerance; check if we've held for the full window
+            # Prefer thermocouple readings for stability
+            _, count_present, vals = self._tcs_within_band(target_c, tol_c)
+            if count_present > 0:
+                any_ok = any(abs(v - target_c) <= tol_c for v in vals)
+                msg_vals = ", ".join(f"{v:.2f}" for v in vals)
+                log_message(f"TCs [{msg_vals}] C vs target {target_c:.2f} C (tol ±{tol_c:.2f} C) -> {'OK' if any_ok else 'OUT'} (any)")
+                if any_ok:
                     if time.time() >= end_required:
-                        log_message("Temperature stable within tolerance window")
+                        log_message("Thermocouples (any) stable within tolerance window")
                         return
-                    # Still within window; continue holding
                 else:
-                    # Reset window start if we left tolerance band
                     end_required = time.time() + window_s
-                    log_message("Outside tolerance; resetting stability window")
+                    log_message("Thermocouples (any) outside tolerance; resetting stability window")
             else:
-                log_message("Temp read failed; continuing")
+                # Fallback to controller reading if no TCs available
+                curr = self._read_actual_temp()
+                if curr is not None:
+                    delta = abs(curr - target_c)
+                    log_message(f"Controller temp {curr:.2f} C (target {target_c:.2f} C, |Δ|={delta:.2f} C, tol={tol_c:.2f} C)")
+                    if delta <= tol_c:
+                        if time.time() >= end_required:
+                            log_message("Controller temperature stable within tolerance window")
+                            return
+                    else:
+                        end_required = time.time() + window_s
+                        log_message("Controller outside tolerance; resetting stability window")
+                else:
+                    log_message("No temperature feedback available; continuing")
             self._maybe_log_telemetry(phase="stabilize")
             time.sleep(max(1, int(poll_s)))
 
@@ -172,8 +195,6 @@ class LynxThermalCycleManager:
     def _get_psu_snapshot(self):
         v = c = out = None
         psu = getattr(self.test_manager, "power_supply", None)
-        tc1 = getattr(self.test_manager, "thermocouple_1", None)
-        tc2 = getattr(self.test_manager, "thermocouple_2", None)
         if psu is None:
             return v, c, out
         try:
@@ -188,18 +209,22 @@ class LynxThermalCycleManager:
             out = psu.get_output_state()
         except (OSError, ValueError):
             pass
+        return v, c, out
 
+    def _get_tc_snapshot(self):
+        """Read temperatures from attached thermocouples if available."""
+        tc1_temp = tc2_temp = None
+        tc1 = getattr(self.test_manager, "thermocouple_1", None)
+        tc2 = getattr(self.test_manager, "thermocouple_2", None)
         try:
             tc1_temp = tc1.read_temperature() if tc1 is not None else None
         except (OSError, ValueError):
             pass
-
         try:
             tc2_temp = tc2.read_temperature() if tc2 is not None else None
         except (OSError, ValueError):
             pass
-
-        return v, c, out, tc1_temp, tc2_temp
+        return tc1_temp, tc2_temp
 
     def _log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
                         sig_a_enabled: Optional[bool] = None, na_enabled: Optional[bool] = None,
@@ -235,9 +260,9 @@ class LynxThermalCycleManager:
                 f"{actual:.3f}" if isinstance(actual, (int, float)) else "",
                 f"{v:.3f}" if isinstance(v, (int, float)) else "",
                 f"{c:.3f}" if isinstance(c, (int, float)) else "",
+                str(bool(out)) if out is not None else "",
                 f"{tc1:.3f}" if isinstance(tc1, (int, float)) else "",
                 f"{tc2:.3f}" if isinstance(tc2, (int, float)) else "",
-                str(bool(out)) if out is not None else "",
                 str(bool(sig_a_enabled)) if sig_a_enabled is not None else "",
                 str(bool(na_enabled)) if na_enabled is not None else "",
                 str(bool(sig_a_executed)) if sig_a_executed is not None else "",
@@ -261,6 +286,8 @@ class LynxThermalCycleManager:
                         "psu_voltage": float(v) if isinstance(v, (int, float)) else None,
                         "psu_current": float(c) if isinstance(c, (int, float)) else None,
                         "psu_output": bool(out) if out is not None else None,
+                        "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
+                        "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
                         "tests_sig_a_enabled": bool(sig_a_enabled) if sig_a_enabled is not None else None,
                         "tests_na_enabled": bool(na_enabled) if na_enabled is not None else None,
                         "tests_sig_a_executed": bool(sig_a_executed) if sig_a_executed is not None else None,
@@ -278,7 +305,7 @@ class LynxThermalCycleManager:
                               sig_a_enabled: Optional[bool] = None, na_enabled: Optional[bool] = None,
                               sig_a_executed: Optional[bool] = None, na_executed: Optional[bool] = None):
         now = time.time()
-        if now - self._telemetry_last_ts >= 5.0:
+        if now - self._telemetry_last_ts >= 2.5:
             self._log_telemetry(phase=phase, step=step, setpoint_c=setpoint_c,
                                 sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
                                 sig_a_executed=sig_a_executed, na_executed=na_executed)
@@ -388,30 +415,29 @@ class LynxThermalCycleManager:
             if cycle_type == "RAMP":
                 # For ramps, wait until we're within target +/- target_temp_delta or for configured dwell time
                 target_delta = float(getattr(step, "target_temp_delta", tol_c) or tol_c)
-                if self.temp_controller is None:
-                    # Fallback: sleep given dwell or a small default
-                    wait_s = dwell_s if dwell_s > 0 else max(60, initial_delay_s)
-                    log_message(f"[SIM] RAMP wait {wait_s}s")
-                    end = time.time() + wait_s
-                    while time.time() < end:
-                        self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c,
-                                                  sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
-                        time.sleep(5)
-                else:
-                    log_message(f"RAMP: waiting to be within ±{target_delta} C of target")
-                    # Use a shorter window for ramp approach: hold within band for 2 consecutive polls
-                    consecutive_needed = 2
-                    consecutive = 0
-                    while consecutive < consecutive_needed:
+                log_message(f"RAMP: waiting for thermocouples within ±{target_delta} C of target")
+                # Use a shorter window for ramp approach: hold within band for 2 consecutive polls
+                consecutive_needed = 2
+                consecutive = 0
+                while consecutive < consecutive_needed:
+                    _, count_present, vals = self._tcs_within_band(target_c, target_delta)
+                    if count_present > 0:
+                        any_ok = any(abs(v - target_c) <= target_delta for v in vals)
+                        consecutive = consecutive + 1 if any_ok else 0
+                        msg_vals = ", ".join(f"{v:.2f}" for v in vals)
+                        log_message(f"RAMP TC check [{msg_vals}] vs {target_c:.2f} ±{target_delta:.2f} -> {'OK' if any_ok else 'OUT'} (any) ({consecutive}/{consecutive_needed})")
+                    else:
+                        # Fallback to controller if no TCs available
                         curr = self._read_actual_temp()
                         if curr is not None and abs(curr - target_c) <= target_delta:
                             consecutive += 1
+                            log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
                         else:
                             consecutive = 0
-                        self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c,
-                                                  sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
-                        time.sleep(max(1, int(poll_s)))
-                    log_message("RAMP: target band reached")
+                    self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c,
+                                              sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+                    time.sleep(max(1, int(poll_s)))
+                log_message("RAMP: target band reached via thermocouples")
 
             elif cycle_type in ("DWELL", "SOAK"):
                 # Wait to be stable within tolerance window, then dwell for the specified time
@@ -429,7 +455,7 @@ class LynxThermalCycleManager:
                         self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=setpoint_c,
                                                   sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
                                                   sig_a_executed=sig_a_exec, na_executed=na_exec)
-                        time.sleep(5)
+                        time.sleep(2.5)
             else:
                 # Unknown/unspecified type: do a conservative wait
                 log_message("Unknown step type; performing conservative stability wait")
