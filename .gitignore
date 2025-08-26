@@ -3,6 +3,7 @@ data/
 dist/
 build/
 .venv/
+venv/
 
 # Data files
 *.csv

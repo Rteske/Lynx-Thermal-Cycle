@@ -1,5 +1,5 @@
 import pyvisa
-from core.lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
+from src.core.lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
 from instruments.power_meter import E4418BPowerMeter
 from instruments.power_supply import PowerSupply
 from instruments.signal_generator import E4438CSignalGenerator
@@ -8,6 +8,7 @@ from instruments.signal_analyzer import MXASignalAnalyzer
 from instruments.network_analyzer import PNAXNetworkAnalyzer
 from instruments.ztm import ZtmModular  
 from instruments.daq import RS422_DAQ
+from instruments.hardware_config import get_daq_instance
 from configs.scribe import Scribe
 import logging
 import time
@@ -16,8 +17,29 @@ logger = logging.getLogger(__name__)
 
 class PaTopLevelTestManager:
     
-    def __init__(self, sim) -> None:
+    def __init__(self, sim=True) -> None:
+        """
+        Initialize the PA Top Level Test Manager.
+        
+        Args:
+            sim (bool): If True, uses simulated instruments. If False, uses real hardware.
+        """
+        # Import and configure hardware simulation
+        from instruments.hardware_config import set_simulation_mode
+        set_simulation_mode(sim)
+        
+        self.simulation_mode = sim
         self.instruments_connection = {"rfpm1_input": True, "rfpm2_output": True, "rfsg": True, "rfsa": True, "na": True, "temp_probe": True, "daq": True}
+        
+        # Always initialize DAQ (real or simulated based on configuration)
+        try:
+            self.daq = get_daq_instance()
+            logger.info("DAQ connected successfully")
+        except Exception as e:
+            logger.warning("FAILED TO CONNECT TO DAQ: %s", e)
+            self.instruments_connection["daq"] = False
+            logger.warning("DAQ NOT connected")
+        
         if not sim:
             self.rm = pyvisa.ResourceManager()
             self.instruments = self.rm.list_resources()
@@ -82,13 +104,6 @@ class PaTopLevelTestManager:
                 logger.warning("Power Supply NOT connected")
 
             try:
-                self.daq = RS422_DAQ()
-            except:
-                logger.warning("FAILED TO CONNECT TO AIOUSB")
-                self.instruments_connection["daq"] = False
-                logger.warning("DAQ (AIOUSB) NOT connected")
-
-            try:
                 self.switch_bank = ZtmModular()
                 self.switch_bank.init_resource("02402230028")
                 self.switch_bank.reset_all_switches()
@@ -126,6 +141,51 @@ class PaTopLevelTestManager:
 
             self.scribe = Scribe("LYNX_PA")
             logger.info("Instrument connectivity summary: %s", self.instruments_connection)
+        else:
+            # Simulation mode - set up minimal simulated instruments
+            logger.info("Running in simulation mode")
+            self.running_state = False
+            self.state = False
+            
+            # Create placeholder simulated instruments
+            self.rfpm1 = None
+            self.rfpm2 = None
+            self.rfsg = None
+            self.rfsa = None
+            self.na = None
+            self.temp_probe = None
+            self.temp_probe2 = None
+            self.power_supply = None
+            self.switch_bank = None
+            
+            # Load configuration
+            from configs.configs import LynxPaConfig
+            self.lynx_config = LynxPaConfig("LYNX_PA")
+            
+            # Create test modules with simulated instruments (they will handle None gracefully)
+            self.sig_a_test = None  # Will be created when needed
+            self.na_test = None     # Will be created when needed
+            
+            self.freqs_and_switchpaths_siga_tests = {}
+            self.freqs_and_switchpaths_na_tests = {}
+            
+            self.paths = [
+                "HIGH_BAND_PATH1 (Vertical)",
+                "HIGH_BAND_PATH2 (Vertical)", 
+                "HIGH_BAND_PATH3 (Vertical)",
+                "LOW_BAND_PATH1 (Vertical)",
+                "LOW_BAND_PATH2 (Vertical)",
+                "LOW_BAND_PATH3 (Vertical)",
+                "HIGH_BAND_PATH1 (Horizontal)",
+                "HIGH_BAND_PATH2 (Horizontal)",
+                "HIGH_BAND_PATH3 (Horizontal)",
+                "LOW_BAND_PATH1 (Horizontal)",
+                "LOW_BAND_PATH2 (Horizontal)",
+                "LOW_BAND_PATH3 (Horizontal)"
+            ]
+            
+            self.scribe = Scribe("LYNX_PA")
+            logger.info("Simulation mode initialized - DAQ available: %s", hasattr(self, 'daq') and self.daq is not None)
 
     def process_and_write_module_na_data(self, gain_bucket, phase_bucket, switchpath, ratioed_power):
         freqs = gain_bucket[0]["freqs"]

@@ -17,7 +17,7 @@ def run_gui():  # pragma: no cover - convenience entrypoint
         print("PyQt5/pyqtgraph not installed. Install with: pip install PyQt5 pyqtgraph")
         return
 
-    class QTextEditLogger(QtGui.QTextEdit):
+    class QTextEditLogger(QtWidgets.QTextEdit):
         def __init__(self, parent=None):
             super().__init__(parent)
             self.setReadOnly(True)
@@ -144,7 +144,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
                 pass
 
     app = QtWidgets.QApplication(sys.argv)
-    manager = LynxThermalCycleManager()
+    # Use simulation mode by default for development
+    manager = LynxThermalCycleManager(simulation_mode=True)
     win = LiveWindow(manager)
     win.show()
     sys.exit(app.exec_())

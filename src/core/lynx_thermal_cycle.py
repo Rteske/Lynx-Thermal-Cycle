@@ -18,16 +18,29 @@ from instruments.temp_controller import TempController
 from src.utils.logging_utils import log_message
 
 class LynxThermalCycleManager:
-    def __init__(self):
-        self.test_manager = PaTopLevelTestManager(sim=False)
+    def __init__(self, simulation_mode=False):
+        """
+        Initialize the Lynx Thermal Cycle Manager.
+        
+        Args:
+            simulation_mode (bool): If True, uses simulated instruments. If False, uses real hardware.
+        """
+        self.simulation_mode = simulation_mode
+        self.test_manager = PaTopLevelTestManager(sim=simulation_mode)
         self.temp_profile_manager = None
         self.telemetry_callback = None  # set via set_telemetry_callback
 
         # Initialize temperature controller and turn chamber ON
         try:
-            self.temp_controller = TempController()
-            self.temp_controller.set_chamber_state(True)
-            self.temp_channel = 1
+            if not simulation_mode:
+                self.temp_controller = TempController()
+                self.temp_controller.set_chamber_state(True)
+                self.temp_channel = 1
+            else:
+                # Use simulated temperature controller
+                self.temp_controller = None  # Will be replaced with simulated version
+                self.temp_channel = 1
+                print("Using simulated temperature controller")
             log_message("TempController initialized and chamber turned ON")
         except (SerialException, OSError, RuntimeError) as e:
             # If we can't connect, keep None and operate in no-op mode
@@ -45,7 +58,7 @@ class LynxThermalCycleManager:
                 with open(self.telemetry_path, "w", encoding="utf-8") as f:
                     f.write(
                         "timestamp,step_index,step_name,cycle_type,phase,target_c,setpoint_c,actual_temp_c," \
-                        "psu_voltage,psu_current,psu_output,tests_sig_a_enabled,tests_na_enabled," \
+                        "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp,tests_sig_a_enabled,tests_na_enabled," \
                         "tests_sig_a_executed,tests_na_executed\n"
                     )
             log_message(f"Telemetry CSV -> {self.telemetry_path}")
@@ -159,6 +172,8 @@ class LynxThermalCycleManager:
     def _get_psu_snapshot(self):
         v = c = out = None
         psu = getattr(self.test_manager, "power_supply", None)
+        tc1 = getattr(self.test_manager, "thermocouple_1", None)
+        tc2 = getattr(self.test_manager, "thermocouple_2", None)
         if psu is None:
             return v, c, out
         try:
@@ -173,7 +188,18 @@ class LynxThermalCycleManager:
             out = psu.get_output_state()
         except (OSError, ValueError):
             pass
-        return v, c, out
+
+        try:
+            tc1_temp = tc1.read_temperature() if tc1 is not None else None
+        except (OSError, ValueError):
+            pass
+
+        try:
+            tc2_temp = tc2.read_temperature() if tc2 is not None else None
+        except (OSError, ValueError):
+            pass
+
+        return v, c, out, tc1_temp, tc2_temp
 
     def _log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
                         sig_a_enabled: Optional[bool] = None, na_enabled: Optional[bool] = None,
@@ -196,6 +222,7 @@ class LynxThermalCycleManager:
                 sp = None
             actual = self._read_actual_temp()
             v, c, out = self._get_psu_snapshot()
+            tc1, tc2 = self._get_tc_snapshot()
 
             line = [
                 dt.datetime.now().isoformat(),
@@ -208,6 +235,8 @@ class LynxThermalCycleManager:
                 f"{actual:.3f}" if isinstance(actual, (int, float)) else "",
                 f"{v:.3f}" if isinstance(v, (int, float)) else "",
                 f"{c:.3f}" if isinstance(c, (int, float)) else "",
+                f"{tc1:.3f}" if isinstance(tc1, (int, float)) else "",
+                f"{tc2:.3f}" if isinstance(tc2, (int, float)) else "",
                 str(bool(out)) if out is not None else "",
                 str(bool(sig_a_enabled)) if sig_a_enabled is not None else "",
                 str(bool(na_enabled)) if na_enabled is not None else "",
