@@ -125,18 +125,12 @@ class PaTopLevelTestManager:
             self.freqs_and_switchpaths_na_tests = {}
 
             self.paths = [
-            "HIGH_BAND_PATH1 (Vertical)",
-            "HIGH_BAND_PATH2 (Vertical)",
-            "HIGH_BAND_PATH3 (Vertical)",
-            "LOW_BAND_PATH1 (Vertical)",
-            "LOW_BAND_PATH2 (Vertical)",
-            "LOW_BAND_PATH3 (Vertical)",
-            "HIGH_BAND_PATH1 (Horizontal)",
-            "HIGH_BAND_PATH2 (Horizontal)",
-            "HIGH_BAND_PATH3 (Horizontal)",
-            "LOW_BAND_PATH1 (Horizontal)",
-            "LOW_BAND_PATH2 (Horizontal)",
-            "LOW_BAND_PATH3 (Horizontal)"
+                "Band1_SN1",
+                "Band1_SN2",
+                "Band2_SN1",
+                "Band2_SN2",
+                "Band3_SN1",
+                "Band3_SN2"
             ]
 
             self.scribe = Scribe("LYNX_PA")

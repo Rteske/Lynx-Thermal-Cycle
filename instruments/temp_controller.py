@@ -83,3 +83,15 @@ class DtechRS232:
         self.ser.flush()
         return buffer 
     
+if __name__ == "__main__":
+    tc = TempController()
+    tc.set_setpoint(1, 25)
+    time.sleep(1)
+    print(tc.query_setpoint(1))
+    print(tc.query_actual(1))
+    tc.set_chamber_state(True)
+    time.sleep(1)
+    print(tc.query_chamber_state())
+    tc.set_chamber_state(False)
+    time.sleep(1)
+    print(tc.query_chamber_state())

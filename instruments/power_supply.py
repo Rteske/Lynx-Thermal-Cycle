@@ -88,6 +88,9 @@ class PowerSupply:
     def __init__(self, visa_address):
         rm = pyvisa.ResourceManager()
         self._res = rm.open_resource(visa_address)
+
+        self.max_voltage = 34.5
+        self.max_current = 3
         print("Power Supply Validated")
 
     def _on_off_str(self, state):
@@ -105,6 +108,8 @@ class PowerSupply:
 
     def set_voltage(self, voltage):
         """Set the voltage"""
+        if voltage > self.max_voltage:
+            raise ValueError(f"Voltage exceeds maximum limit of {self.max_voltage} V")
         print('Set voltage to %0.2f V' % voltage)
         self._res.write(f'VOLT:LEV {voltage}V')
 
@@ -117,6 +122,8 @@ class PowerSupply:
 
     def set_current(self, current):
         """Set the current limit"""
+        if current > self.max_current:
+            raise ValueError(f"Current exceeds maximum limit of {self.max_current} A")
         print('Set current limit to %0.2f A' % current)
         self._res.write(f'CURR:LEV {current}')
 
@@ -163,5 +170,8 @@ if __name__ == "__main__":
 
     voltage = psu.get_voltage()
     current = psu.get_current()
+
+    psu.set_voltage(36)
+    psu.set_current(3)
 
     print(voltage, current)

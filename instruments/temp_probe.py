@@ -67,3 +67,8 @@ class Agilent34401A:
         res = self.measure_voltage_dc()
         temp = float(res) * 1000
         return temp
+    
+if __name__ == "__main__":
+    tc = Agilent34401A("GPIB0::29::INSTR")
+    fuck = tc.measure_temp()
+    print(fuck)

@@ -7,7 +7,7 @@ This file controls whether to use real hardware or simulated devices.
 SIMULATION_MODE = False  # Set to False to use real hardware
 
 # Individual device simulation settings
-SIMULATE_DAQ = True
+SIMULATE_DAQ = False
 SIMULATE_TEMP_CONTROLLER = False
 SIMULATE_TEMP_PROBE = False
 SIMULATE_POWER_SUPPLY = False
