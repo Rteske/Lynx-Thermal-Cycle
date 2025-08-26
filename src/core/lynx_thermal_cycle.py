@@ -12,6 +12,7 @@ except ImportError:
     class VisaIOError(Exception):
         pass
 
+from instruments.temp_probe import Agilent34401A
 from src.core.lynx_pa_top_level_test_manager import PaTopLevelTestManager
 from src.core.temp import TempProfileManager
 from instruments.temp_controller import TempController
@@ -138,7 +139,7 @@ class LynxThermalCycleManager:
             # Log during initial delay as well
             end = time.time() + initial_delay_s
             while time.time() < end:
-                self._maybe_log_telemetry(phase="stabilize")
+                self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
                 time.sleep(min(5, initial_delay_s))
         # If no thermocouples and no controller, fallback to timed wait
         _, tc_count, _ = self._tcs_within_band(target_c, tol_c)
@@ -146,7 +147,7 @@ class LynxThermalCycleManager:
             log_message(f"[SIM] No temperature feedback; sleeping {window_s}s as stability window")
             end = time.time() + window_s
             while time.time() < end:
-                self._maybe_log_telemetry(phase="stabilize")
+                self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
                 time.sleep(5)
             return
 
@@ -180,7 +181,7 @@ class LynxThermalCycleManager:
                         log_message("Controller outside tolerance; resetting stability window")
                 else:
                     log_message("No temperature feedback available; continuing")
-            self._maybe_log_telemetry(phase="stabilize")
+            self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
             time.sleep(max(1, int(poll_s)))
 
     # --------- Telemetry helpers ---------
@@ -214,14 +215,16 @@ class LynxThermalCycleManager:
     def _get_tc_snapshot(self):
         """Read temperatures from attached thermocouples if available."""
         tc1_temp = tc2_temp = None
-        tc1 = getattr(self.test_manager, "thermocouple_1", None)
-        tc2 = getattr(self.test_manager, "thermocouple_2", None)
+        tc1 = getattr(self.test_manager, "temp_probe", None)
+        tc2 = getattr(self.test_manager, "temp_probe2", None)
         try:
-            tc1_temp = tc1.read_temperature() if tc1 is not None else None
+            if isinstance(tc1, Agilent34401A):
+                tc1_temp = tc1.measure_temp() if tc1 is not None else None
         except (OSError, ValueError):
             pass
         try:
-            tc2_temp = tc2.read_temperature() if tc2 is not None else None
+            if isinstance(tc2, Agilent34401A):
+                tc2_temp = tc2.measure_temp() if tc2 is not None else None
         except (OSError, ValueError):
             pass
         return tc1_temp, tc2_temp
@@ -395,7 +398,7 @@ class LynxThermalCycleManager:
             dwell_min = float(getattr(step, "total_time", 0) or 0)
             dwell_s = int(dwell_min * 60)
             cycle_type = getattr(step, "temp_cycle_type", "").upper()
-
+            self.current_step = step
             log_message("-" * 60)
             log_message(f"Step {idx}/{len(all_steps)} | {getattr(step, 'step_name', 'Unnamed')} | {cycle_type}")
             log_message(f"Target {target_c:.2f} C (setpoint {setpoint_c:.2f} C, tol ±{tol_c:.2f} C)")
