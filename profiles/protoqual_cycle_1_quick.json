@@ -4,7 +4,7 @@
     "description": "QUICK: Performance tests at 25C with +34V, then power OFF",
     "temperature": 25.0,
     "target_temp_delta": 2.0,
-    "temp_controller_offset": 0.0,
+    "temp_controller_offset": -5.0,
     "psat_tests": true,
     "gain_tests": true,
     "phase_tests": true,

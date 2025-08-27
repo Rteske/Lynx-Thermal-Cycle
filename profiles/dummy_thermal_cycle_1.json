@@ -4,7 +4,7 @@
         "description": "DUMMY - Cycle 1 - Plateau 1: Performance tests at 25°C, apply 6V and perform all tests, then turn off power",
         "temperature": 25.0,
         "target_temp_delta": 2.0,
-        "temp_controller_offset": 0.0,
+        "temp_controller_offset": -5.0,
         "psat_tests": true,
         "gain_tests": true,
         "phase_tests": true,
@@ -24,9 +24,9 @@
         "voltage": 34.0,
         "current": 2.5,
         "settlement_tolerance": 0.5,
-        "settlement_window": 300,
-        "monitoring_interval": 10,
-        "initial_delay": 10,
+        "settlement_window": 10,
+        "monitoring_interval": 0.5,
+        "initial_delay": 1,
         "power_off_after": true
     },
     {

@@ -146,7 +146,11 @@ class LynxThermalCycleManager:
         except (RuntimeError, OSError, ValueError) as e:
             log_message(f"Error reading temp_probe: {e}")
 
-    def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int):
+    def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int, temp_offset: float):
+        sp = target_c + temp_offset
+        start_time = time.time()
+        last_adjust_time = start_time
+        adjust_interval = 30  # seconds
         # Initial wait before monitoring
         if initial_delay_s and initial_delay_s > 0:
             log_message(f"Initial delay {initial_delay_s}s before stability monitoring…")
@@ -157,10 +161,8 @@ class LynxThermalCycleManager:
                 self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
                 time.sleep(min(5, initial_delay_s))
 
-        self._set_setpoint(setpoint_c=target_c)
-
         # Wait for temperature to reach within target temp delta
-        sp = target_c
+        sp = target_c + temp_offset
         start_time = time.time()
         last_adjust_time = start_time
         adjust_interval = 30  # seconds
@@ -452,7 +454,9 @@ class LynxThermalCycleManager:
             # Apply PSU state per step
             self._apply_power_for_step(getattr(step, "voltage", 0.0) or 0.0, getattr(step, "current", 0.0) or 0.0)
 
-            self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=60, poll_s=poll_s, initial_delay_s=10)
+            self._set_setpoint(setpoint_c=setpoint_c + offset_c)
+
+            self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=60, poll_s=poll_s, initial_delay_s=10, temp_offset=offset_c)
 
             # Handle by step type
             if cycle_type == "RAMP":
@@ -482,7 +486,7 @@ class LynxThermalCycleManager:
                 log_message("RAMP: target band reached via thermocouples")
             elif cycle_type in ("DWELL", "SOAK"):
                 # Wait to be stable within tolerance window, then dwell for the specified time
-                self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s)
+                self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=offset_c)
 
                 # Run tests (if any) once stable
                 sig_a_exec = na_exec = False
