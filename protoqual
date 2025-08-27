@@ -1,0 +1,196 @@
+protoqual instructions
+
+1.	The profile of cycle 1 of thermal cycling tests at ambient pressure is shown in Figure 15.
+2.	Each numbered plateau requires a specific set of test data taken as well as control and telemetry communication with the DUT. 
+Note:  The functional temperature plateaus are different for each unit.  These plateaus will be set to the Protoqual (Flight-1) functional temperatures.
+
+3.	Plateau #1:
+a.	Performance tests and characterization data at 25°C.
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Apply 34V to DUT and perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+e.	Turn off power to the DUT.
+f.	Apply 28V to the DUT and perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+4.	Set thermal plate temperature to 55°C.
+5.	Leave 28V on and verify DUT temperature stabilization at 55°C.
+6.	Plateau #2:
+a.	Performance tests and characterization data at 55°C (28V).
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+7.	Set thermal plate temperature to 66°C.  
+8.	Leave 28V on and verify temperature stabilization at 66°C.
+9.	Plateau #3:  
+a.	Turn off 28V and dwell for 1 hour.
+b.	Apply 28V to DUT and perform Hot Start test
+c.	Functional tests and characterization data at 66°C (28V).
+d.	Perform the following steps:
+o	Measure output power in high gain state (-10 dBm input) for each band with CW input signal.  This step includes DC power consumption measurements.
+o	Perform control and telemetry testing.  
+o	Run ATE software to log voltage and temperature telemetry during tests.
+e.	Soak for 6 hours at 66°C with +28V applied to the DUT..
+10.	Turn off 28V to the DUT.
+11.	Set the thermal plate temperature to 71°C.
+12.	Verify DUT temperature stabilization at 71°C.
+13.	Plateau #4:  
+1.	Dwell for 1 hour
+2.	Unpowered Hot Survival at 71°C for 1 more hour.
+14.	Set the thermal plate temperature to -40°C.
+15.	Verify DUT temperature stabilization at -40°C.
+16.	Plateau #5:  
+a.	Dwell for 1 hour at -40°C.
+b.	Unpowered Cold survival at -40°C for 1 more hour
+17.	Set temperature plate to -29°C
+18.	Verify DUT temperature stabilization at -29°C.
+19.	Plateau #6:
+1.	Dwell for 1 hour at -29°C.
+2.	Apply 28V to the DUT.
+3.	Perform Cold Start test at -29°C.
+4.	Functional tests and characterization data at -29°C (28V).
+o	Measure output power in high gain state (-10 dBm input) for each band with CW input signal.  This step includes DC power consumption measurements.
+o	Perform control and telemetry testing.  
+o	Run ATE software to log voltage and temperature telemetry during tests.
+o	Soak for 6 hours at -29°C with +28V applied to the DUT.
+20.	Set temperature plate to -13°C
+21.	Verify DUT temperature stabilization at -13°C.
+22.	Plateau #7:
+a.	Performance tests and characterization data at -13°C (28V).
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+23.	Set temperature plate to 66°C
+24.	Plateau #8:  Verify temperature stabilization at 66°C and dwell for 1 hour.
+
+Intermediate Cycles (Cycle 2-15)
+
+           
+Figure 16:  Protoqual Thermal Cycle 2-15 Profile at ambient pressure
+
+
+1.	The profile of cycles 2-15 of thermal cycling tests at ambient pressure is shown in Figure 16.
+a.	Temperature plateaus of -29°C and 66°C
+b.	Ramp rate of 4°C/min
+c.	After DUT temperature stabilization, complete 1 hour dwell + 1 hour soak at each plateau
+2.	This section of the test will utilize an ATE setup to log RF and DC data through the duration of the cycles.  It will also send commands and receive telemetry data from the DUT.
+3.	Program the temperature plate to the profile shown in Figure 16.
+4.	Run the temperature profile of the temp plate.
+5.	The ATE software will perform the following functions through the duration of the cycles:
+o	Set the gain to high gain state  
+o	Log Pin and Pout CW data for each amplifier module at high-gain state
+o	Log DC power consumption for each band 
+o	Query and log voltage and temperature telemetry with timestamps
+o	Apply +28V to DUT for even-numbered cycles (except for cold ramp to -29C)
+o	Apply +34V to DUT for odd-numbered cycles (except for cold ramp to -29C)
+o	Switch bands every 10 minutes and continuously log data
+
+Last Cycle (Cycle 16):
+
+          
+Figure 17: Protoqual Last Cycle Profile at ambient pressure
+
+1.	The profile of cycle 16 of thermal cycle tests at ambient pressure is shown in Figure 17.
+2.	Each numbered plateau requires a specific set of test data taken as well as control and telemetry communication with the DUT. 
+3.	Plateau #1:
+a.	Verify DUT temperature stabilization at 66°C (28V).
+b.	Turn off 28V and dwell for 1 hour.
+c.	Apply 28V to DUT and perform Hot Start test
+d.	Functional tests and characterization data at 66°C (28V). 
+e.	Perform the following steps:
+o	Measure output power in high gain state for each band with CW input signal.  This step includes DC power consumption measurements.
+o	Perform control and telemetry testing.  
+o	Run ATE software to log voltage and temperature telemetry during tests.
+o	Soak for 6 hours at 66°C with +28V applied to the DUT.  
+4.	Set thermal plate temperature to 55°C.
+5.	Leave 28V on and verify temperature stabilization at 55°C.
+6.	Plateau #2:
+a.	Performance tests and characterization data at 55°C (28V).
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+7.	Remove 28V
+8.	Set thermal plate temperature to -29°C.
+9.	Verify DUT temperature stabilization at -29°C.
+10.	Dwell for 1 hour.
+11.	Apply 28V to the DUT.
+12.	Perform cold start test at -29°C.
+13.	Plateau #3:
+a.	Functional tests and characterization data at -29°C.
+o	Measure output power in high gain state for each band with CW input signal.  This step includes DC power consumption measurements.
+o	Perform control and telemetry testing.  
+o	Run ATE software to log voltage and temperature telemetry during tests.
+o	Soak for 6 hours at -29°C with +28V applied to the DUT.
+14.	Set temperature plate to -13°C
+15.	Verify DUT temperature stabilization at -13°C.
+16.	Plateau #4:  
+a.	Performance tests and characterization data at -13°C (28V).
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+17.	Set temperature plate to 25°C
+18.	Verify DUT temperature stabilization at 25°C
+19.	Plateau #5:  
+a.	Performance tests and characterization data at 25°C (28V).
+b.	Dwell for 1 hour
+c.	Run ATE software to log voltage and temperature telemetry during tests.
+d.	Perform the following steps:
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps  
+o	Turn off 28V to the DUT.
+20.	Set temperature plate to 50°C
+21.	 Plateau #5: Dwell for 30 minutes (50°C bake out)
+22.	Set temperature plate to 25°C.
+23.	Plateau #6:  25°C, end of thermal cycle test at ambient pressure.
