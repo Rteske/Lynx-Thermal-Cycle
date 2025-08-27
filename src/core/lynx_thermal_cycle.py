@@ -12,7 +12,7 @@ except ImportError:
     class VisaIOError(Exception):
         pass
 
-from instruments.temp_probe import Agilent34401A
+# Temp probe accessed via duck typing (measure_temp())
 from src.core.lynx_pa_top_level_test_manager import PaTopLevelTestManager
 from src.core.temp import TempProfileManager
 from instruments.temp_controller import TempController
@@ -112,6 +112,9 @@ class LynxThermalCycleManager:
                 actual_temp = self._read_actual_temp()
                 if actual_temp is not None:
                     break
+                if time.time() - start_time >= timeout:
+                    log_message("Setpoint applied; no controller reading yet (timeout). Proceeding.")
+                    break
                 self._maybe_log_telemetry(phase="setpoint-wait", step=self.current_step, setpoint_c=setpoint_c)
                 time.sleep(0.5)
         except (SerialException, ValueError, OSError) as e:
@@ -144,12 +147,12 @@ class LynxThermalCycleManager:
         return all_ok, len(vals), vals
 
     def _get_pid_measurement(self, _target_c: float) -> Optional[float]:
-        """Get temperature measurement for PID control - uses only temp_probe"""
-        # Use only the primary temp_probe for the real temperature measurement
+        """Get temperature measurement for PID control - prefers TC1 probe via duck typing."""
         try:
             tc = getattr(self.test_manager, "temp_probe", None)
-            if isinstance(tc, Agilent34401A):
-                temp = tc.measure_temp()
+            # Duck-typing: any object with measure_temp() is acceptable
+            if tc is not None and hasattr(tc, "measure_temp"):
+                temp = tc.measure_temp()  # type: ignore[attr-defined]
                 if isinstance(temp, (int, float)):
                     return float(temp)
         except (RuntimeError, OSError, ValueError) as e:
@@ -172,6 +175,11 @@ class LynxThermalCycleManager:
         sp = float(target_c + (temp_offset or 0.0))
         self._set_setpoint(sp)
 
+        # Lock a measurement source for the entire step (prefer TC1)
+        def read_control_meas() -> Optional[float]:
+            v = self._get_pid_measurement(target_c)
+            return v if isinstance(v, (int, float)) else self._read_actual_temp()
+
         # Initial delay
         if initial_delay_s and initial_delay_s > 0:
             log_message(
@@ -184,19 +192,51 @@ class LynxThermalCycleManager:
 
         # P-control approach to target band
         last_log = 0.0
-        while True:
-            meas = self._get_pid_measurement(target_c)
-            if meas is None:
-                meas = self._read_actual_temp()
-            if meas is None:
-                log_message("PCTRL: No measurement available; proceeding to settlement phase")
-                break
+        approach_start = time.time()
+        # Max approach time: 30 min default; if quick windows, still give at least 2x window
+        max_approach_time_s = max(30 * 60, 2 * int(window_s))
+        missing_meas_count = 0
 
+        # Detect control direction sign: positive means increasing setpoint increases measurement
+        direction_sign = 1.0
+        try:
+            m0 = read_control_meas()
+            # Log control source once
+            if isinstance(m0, (int, float)):
+                log_message("PCTRL: control source = TC1 (temp_probe)")
+                self._set_setpoint(sp + 1.0)
+                time.sleep(max(1, int(poll_s)))
+                m1 = read_control_meas()
+                if isinstance(m1, (int, float)) and m0 is not None:
+                    if (m1 - m0) < 0:
+                        direction_sign = -1.0
+                        log_message("PCTRL: Auto-detected inverted response (direction_sign = -1)")
+                # revert setpoint back near original
+                sp = float(target_c + (temp_offset or 0.0))
+                self._set_setpoint(sp)
+            else:
+                log_message("PCTRL: control source = controller (fallback)")
+        except (RuntimeError, OSError, ValueError):
+            pass
+        while True:
+            meas = read_control_meas()
+            if meas is None:
+                missing_meas_count += 1
+                if self.simulation_mode and missing_meas_count >= 3:
+                    log_message("PCTRL: No measurement (SIM) — skipping approach and proceeding to settlement")
+                    break
+                if (time.time() - approach_start) > max_approach_time_s:
+                    log_message("PCTRL: No measurement; approach timeout reached — proceeding to settlement")
+                    break
+                time.sleep(max(1, int(poll_s)))
+                continue
+
+            # Error is target - measured; apply auto-detected direction sign so delta_sp pushes meas toward target
             error = float(target_c - float(meas))
             in_band = abs(error) <= float(target_temp_delta_c)
 
             # Compute proportional setpoint change with per-iteration clamp
-            delta_sp = kp * error
+            delta_sp = kp * error * direction_sign
             max_step = max(0.1, sp_rate_limit)
             if delta_sp > max_step:
                 delta_sp = max_step
@@ -226,11 +266,19 @@ class LynxThermalCycleManager:
         window_duration = max(1, int(window_s))
         poll = max(1, int(poll_s))
         end_required = time.time() + window_duration
+        missing_meas_count = 0
+        settle_start = time.time()
+        max_settle_time_s = max(60 * 60, 2 * window_duration)  # 1 hour or 2x window, whichever larger
         while True:
-            meas = self._get_pid_measurement(target_c)
+            meas = read_control_meas()
             if meas is None:
-                meas = self._read_actual_temp()
-            if meas is None:
+                missing_meas_count += 1
+                if self.simulation_mode and missing_meas_count >= 3:
+                    log_message("SETTLE: No measurement (SIM) — treating as stable to avoid hang")
+                    return
+                if (time.time() - settle_start) > max_settle_time_s:
+                    log_message("SETTLE: No measurement; settlement timeout reached — proceeding")
+                    return
                 log_message("SETTLE: No measurement; waiting…")
                 time.sleep(poll)
                 continue
@@ -291,14 +339,14 @@ class LynxThermalCycleManager:
         tc1 = getattr(self.test_manager, "temp_probe", None)
         tc2 = getattr(self.test_manager, "temp_probe2", None)
         try:
-            if isinstance(tc1, Agilent34401A):
-                tc1_temp = tc1.measure_temp() if tc1 is not None else None
+            if tc1 is not None and hasattr(tc1, "measure_temp"):
+                tc1_temp = tc1.measure_temp()  # type: ignore[attr-defined]
         except (OSError, ValueError):
             pass
 
         try:
-            if isinstance(tc2, Agilent34401A):
-                tc2_temp = tc2.measure_temp() if tc2 is not None else None
+            if tc2 is not None and hasattr(tc2, "measure_temp"):
+                tc2_temp = tc2.measure_temp()  # type: ignore[attr-defined]
         except (OSError, ValueError):
             pass
 
