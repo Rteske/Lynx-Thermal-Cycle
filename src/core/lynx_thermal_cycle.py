@@ -105,6 +105,15 @@ class LynxThermalCycleManager:
         try:
             self.temp_controller.set_setpoint(self.temp_channel, setpoint_c)
             log_message(f"Chamber setpoint -> {setpoint_c:.2f} C (CH{self.temp_channel})")
+            # Wait until the temp_controller actual temperature of the plate finishes updating
+            timeout = 30  # seconds
+            start_time = time.time()
+            while True:
+                actual_temp = self._read_actual_temp()
+                if actual_temp is not None:
+                    break
+                self._maybe_log_telemetry(phase="setpoint-wait", step=self.current_step, setpoint_c=setpoint_c)
+                time.sleep(0.5)
         except (SerialException, ValueError, OSError) as e:
             log_message(f"Failed to set setpoint: {e}")
 
@@ -157,7 +166,7 @@ class LynxThermalCycleManager:
         sp_min = -80.0
         sp_max = 120.0
         kp = float(getattr(self.current_step, "pid_kp", 0.6) or 0.6)
-        sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 3.0) or 3.0)  # degC per poll
+        sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 1.0) or 1.0)  # degC per poll
 
         # Initial setpoint with offset
         sp = float(target_c + (temp_offset or 0.0))
