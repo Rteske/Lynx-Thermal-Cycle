@@ -171,7 +171,8 @@ if __name__ == "__main__":
     voltage = psu.get_voltage()
     current = psu.get_current()
 
-    psu.set_voltage(36)
-    psu.set_current(3)
+    psu.set_voltage(0)
+    psu.set_current(0)
+    psu.set_output_state(False)
 
     print(voltage, current)

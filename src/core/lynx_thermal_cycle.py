@@ -88,6 +88,18 @@ class LynxThermalCycleManager:
         self._pid_backcalc_k = 0.0
         self._pid_sp_rate_limit = None
         self._pid_last_sp_ts = None
+        
+        # Two-stage PID control state
+        self._pid_two_stage_enabled = False
+        self._pid_approach_params = None
+        self._pid_stabilization_params = None
+        self._stabilization_trigger_delta = 2.0
+        self._stabilization_time_required = 45
+        self._stabilization_consecutive_readings = 10
+        self._current_pid_phase = "approach"  # "approach" or "stabilization"
+        self._stabilization_start_time = None
+        self._stabilization_consecutive_count = 0
+        self._stabilization_achieved = False
 
     # --------- Internal helpers ---------
     def _apply_power_for_step(self, voltage: float, current: float):
@@ -145,7 +157,8 @@ class LynxThermalCycleManager:
         """Check if available thermocouples are within target±tol.
         Returns (all_ok, count_present, values_present). If no TCs present, (False, 0, [])."""
         tc1, tc2 = self._get_tc_snapshot()
-        vals: list[float] = [float(v) for v in (tc1, tc2) if isinstance(v, (int, float))]
+        # Use only the primary temp_probe (tc1) for control decisions
+        vals: list[float] = [float(tc1)] if isinstance(tc1, (int, float)) else []
         if not vals:
             return False, 0, []
         all_ok = all(abs(v - target_c) <= tol_c for v in vals)
@@ -212,26 +225,102 @@ class LynxThermalCycleManager:
                 u_clamped = max(self.out_min, min(self.out_max, u))
             return u_clamped
 
+    def _switch_pid_phase(self, new_phase: str, target_c: float):
+        """Switch between approach and stabilization PID phases."""
+        if not self._pid_two_stage_enabled or new_phase == self._current_pid_phase:
+            return
+            
+        self._current_pid_phase = new_phase
+        log_message(f"Switching PID to {new_phase} phase")
+        
+        if new_phase == "stabilization":
+            params = self._pid_stabilization_params
+            self._stabilization_start_time = time.time()
+            self._stabilization_consecutive_count = 0
+        else:
+            params = self._pid_approach_params
+            self._stabilization_start_time = None
+            self._stabilization_consecutive_count = 0
+            
+        # Update PID parameters
+        if params:
+            self._pid.kp = params.get("pid_kp", 0.6)
+            self._pid.ki = params.get("pid_ki", 0.05) 
+            self._pid.kd = params.get("pid_kd", 0.0)
+            max_off = params.get("pid_max_offset", 8.0)
+            self._pid.out_min = -abs(max_off)
+            self._pid.out_max = abs(max_off)
+            self._pid_sp_rate_limit = params.get("pid_sp_rate_limit", 1.0)
+            
+            log_message(f"PID {new_phase} params: kp={self._pid.kp}, ki={self._pid.ki}, kd={self._pid.kd}, "
+                       f"max_offset=±{max_off}, rate_limit={self._pid_sp_rate_limit}")
+    
+    def _check_stabilization_status(self, target_c: float, meas: float) -> bool:
+        """Check if we should switch phases or if stabilization is complete."""
+        if not self._pid_two_stage_enabled:
+            return True  # Always stable if not using two-stage
+        
+        # Determine effective trigger delta for switching:
+        # Prefer step's target_temp_delta or settlement_tolerance if available, else use configured stabilization_trigger_delta
+        eff_trigger = float(self._stabilization_trigger_delta)
+        step = getattr(self, "current_step", None)
+        try:
+            if step is not None:
+                step_target_delta = getattr(step, "target_temp_delta", None)
+                step_tol = getattr(step, "settlement_tolerance", None)
+                cand = []
+                if isinstance(step_target_delta, (int, float)):
+                    cand.append(float(step_target_delta))
+                if isinstance(step_tol, (int, float)):
+                    cand.append(float(step_tol))
+                if cand:
+                    # Use the larger of available step thresholds to switch sooner
+                    eff_trigger = max([eff_trigger] + cand)
+        except Exception:
+            pass
+        within_trigger = abs(meas - target_c) <= eff_trigger
+        
+        if self._current_pid_phase == "approach" and within_trigger:
+            # Switch to stabilization phase
+            try:
+                err = abs(meas - target_c)
+                log_message(f"Two-stage PID: entering stabilization (|Δ|={err:.2f}°C <= trigger {eff_trigger:.2f}°C)")
+            except Exception:
+                pass
+            self._switch_pid_phase("stabilization", target_c)
+            return False
+            
+        elif self._current_pid_phase == "stabilization":
+            if within_trigger:
+                self._stabilization_consecutive_count += 1
+                if self._stabilization_consecutive_count >= self._stabilization_consecutive_readings:
+                    # Check if we've been stable long enough
+                    if self._stabilization_start_time is not None:
+                        stable_time = time.time() - self._stabilization_start_time
+                        if stable_time >= self._stabilization_time_required:
+                            self._stabilization_achieved = True
+                            log_message(f"Stabilization complete: {self._stabilization_consecutive_count} readings over {stable_time:.1f}s (trigger ±{eff_trigger}°C)")
+                            return True
+            else:
+                # Reset consecutive count if outside tolerance
+                self._stabilization_consecutive_count = 0
+                
+        return self._stabilization_achieved
+
     def _get_pid_measurement(self, target_c: float) -> Optional[float]:
-        """Select a measurement for PID based on configured source.
-        Prefers thermocouples; falls back to controller reading.
-        """
-        source = (self._pid_source or "avg").lower()
-        tc1, tc2 = self._get_tc_snapshot()
-        vals = [float(v) for v in (tc1, tc2) if isinstance(v, (int, float))]
-        if source in ("avg", "any", "min", "max") and vals:
-            if source == "avg":
-                return sum(vals) / len(vals)
-            # any: pick the one closest to target (most representative)
-            if source == "any":
-                return min(vals, key=lambda v: abs(v - target_c))
-            if source == "min":
-                return min(vals)
-            if source == "max":
-                return max(vals)
-        if source == "controller" or not vals:
-            return self._read_actual_temp()
-        return None
+        """Get temperature measurement for PID control - uses only temp_probe"""
+        # Use only the primary temp_probe for the real temperature measurement
+        try:
+            tc = getattr(self.test_manager, "temp_probe", None)
+            if isinstance(tc, Agilent34401A):
+                temp = tc.measure_temp()
+                if isinstance(temp, (int, float)):
+                    return float(temp)
+        except Exception as e:
+            log_message(f"Error reading temp_probe: {e}")
+        
+        # Fallback to controller reading if temp_probe not available
+        return self._read_actual_temp()
 
     def _pid_update_if_enabled(self, target_c: float, poll_s: float) -> Optional[float]:
         """If PID is enabled, compute a new setpoint and push it to the chamber.
@@ -246,6 +335,11 @@ class LynxThermalCycleManager:
         meas = self._get_pid_measurement(target_c)
         if meas is None:
             return None
+            
+        # Check two-stage PID status if enabled
+        if self._pid_two_stage_enabled:
+            self._check_stabilization_status(target_c, meas)
+            
         # Optional EMA filtering of measurement
         if isinstance(self._pid_filter_alpha, (int, float)) and 0.0 < float(self._pid_filter_alpha) <= 1.0:
             alpha = float(self._pid_filter_alpha)
@@ -288,6 +382,7 @@ class LynxThermalCycleManager:
                 sp = self._pid_update_if_enabled(target_c, poll_s=float(poll_s))
                 self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
                 time.sleep(min(5, initial_delay_s))
+        
         # If no thermocouples and no controller, fallback to timed wait
         _, tc_count, _ = self._tcs_within_band(target_c, tol_c)
         if tc_count == 0 and self.temp_controller is None:
@@ -299,6 +394,32 @@ class LynxThermalCycleManager:
                 time.sleep(5)
             return
 
+        # Two-stage PID uses its own stabilization logic
+        if self._pid_two_stage_enabled:
+            log_message("Using two-stage PID stabilization logic")
+            while not self._stabilization_achieved:
+                # Get measurement and update PID (includes phase switching logic)
+                sp = self._pid_update_if_enabled(target_c, poll_s=float(poll_s))
+                
+                # Log current status
+                meas = self._get_pid_measurement(target_c)
+                if meas is not None:
+                    delta = abs(meas - target_c)
+                    phase_info = f"Phase: {self._current_pid_phase}"
+                    if self._current_pid_phase == "stabilization":
+                        phase_info += f", Stable readings: {self._stabilization_consecutive_count}/{self._stabilization_consecutive_readings}"
+                        if self._stabilization_start_time:
+                            stable_time = time.time() - self._stabilization_start_time
+                            phase_info += f", Stable time: {stable_time:.1f}/{self._stabilization_time_required}s"
+                    log_message(f"Two-stage PID: {meas:.2f}°C (Δ={delta:.2f}°C) | {phase_info}")
+                
+                self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
+                time.sleep(max(1, int(poll_s)))
+            
+            log_message("Two-stage PID stabilization complete")
+            return
+
+        # Original single-stage stability logic
         end_required = time.time() + window_s
         while True:
             # Prefer thermocouple readings for stability
@@ -568,10 +689,47 @@ class LynxThermalCycleManager:
             # Initialize optional cascade PID (adjusting setpoint to hit DUT/TC target)
             self._pid_enabled = bool(getattr(step, "pid_enable", False))
             if self._pid_enabled:
-                kp = float(getattr(step, "pid_kp", 0.6) or 0.6)
-                ki = float(getattr(step, "pid_ki", 0.05) or 0.05)
-                kd = float(getattr(step, "pid_kd", 0.0) or 0.0)
-                max_off = float(getattr(step, "pid_max_offset", 15.0) or 15.0)
+                # Check if two-stage PID is enabled
+                self._pid_two_stage_enabled = bool(getattr(step, "pid_two_stage_enable", False))
+                
+                if self._pid_two_stage_enabled:
+                    # Load two-stage parameters
+                    self._pid_approach_params = getattr(step, "pid_approach_phase", {})
+                    self._pid_stabilization_params = getattr(step, "pid_stabilization_phase", {})
+                    self._stabilization_trigger_delta = float(getattr(step, "stabilization_trigger_delta", 2.0))
+                    self._stabilization_time_required = float(getattr(step, "stabilization_time_required", 45))
+                    self._stabilization_consecutive_readings = int(getattr(step, "stabilization_consecutive_readings", 10))
+                    
+                    # Initialize with approach phase parameters
+                    self._current_pid_phase = "approach"
+                    self._stabilization_start_time = None
+                    self._stabilization_consecutive_count = 0
+                    self._stabilization_achieved = False
+                    
+                    # Use approach phase parameters for initial PID setup
+                    kp = float(self._pid_approach_params.get("pid_kp", 0.6))
+                    ki = float(self._pid_approach_params.get("pid_ki", 0.05))
+                    kd = float(self._pid_approach_params.get("pid_kd", 0.0))
+                    max_off = float(self._pid_approach_params.get("pid_max_offset", 15.0))
+                    self._pid_sp_rate_limit = float(self._pid_approach_params.get("pid_sp_rate_limit", 1.0))
+                    
+                    log_message(f"Two-stage PID enabled:")
+                    log_message(f"  Approach: kp={kp}, ki={ki}, kd={kd}, max_offset=±{max_off}, rate_limit={self._pid_sp_rate_limit}")
+                    stab_kp = self._pid_stabilization_params.get("pid_kp", 0.8)
+                    stab_ki = self._pid_stabilization_params.get("pid_ki", 0.03)
+                    stab_kd = self._pid_stabilization_params.get("pid_kd", 0.1)
+                    stab_max_off = self._pid_stabilization_params.get("pid_max_offset", 6.0)
+                    stab_rate_limit = self._pid_stabilization_params.get("pid_sp_rate_limit", 1.0)
+                    log_message(f"  Stabilization: kp={stab_kp}, ki={stab_ki}, kd={stab_kd}, max_offset=±{stab_max_off}, rate_limit={stab_rate_limit}")
+                    log_message(f"  Trigger: ±{self._stabilization_trigger_delta}°C, Time: {self._stabilization_time_required}s, Readings: {self._stabilization_consecutive_readings}")
+                else:
+                    # Single-stage PID (original behavior)
+                    kp = float(getattr(step, "pid_kp", 0.6) or 0.6)
+                    ki = float(getattr(step, "pid_ki", 0.05) or 0.05)
+                    kd = float(getattr(step, "pid_kd", 0.0) or 0.0)
+                    max_off = float(getattr(step, "pid_max_offset", 15.0) or 15.0)
+                    self._pid_sp_rate_limit = float(getattr(step, "pid_sp_rate_limit", 1.0))
+                
                 self._pid_source = str(getattr(step, "pid_source", "avg") or "avg")
                 self._pid_deadband = float(getattr(step, "pid_deadband", 0.0) or 0.0)
                 # Upgraded options with sensible defaults
@@ -580,7 +738,7 @@ class LynxThermalCycleManager:
                 self._pid_deriv_on_meas = bool(getattr(step, "pid_derivative_on_measurement", True))
                 self._pid_integral_band = float(getattr(step, "pid_integral_band", 0.8))
                 self._pid_backcalc_k = float(getattr(step, "pid_backcalc_k", 0.1))
-                self._pid_sp_rate_limit = float(getattr(step, "pid_sp_rate_limit", 1.0))
+                
                 self._pid = LynxThermalCycleManager.SimplePID(
                     kp, ki, kd,
                     output_limits=(-abs(max_off), abs(max_off)),
@@ -595,11 +753,13 @@ class LynxThermalCycleManager:
                 self._pid_last_update = None
                 self._pid_meas_ema = None
                 self._pid_last_sp_ts = None
-                log_message(
-                    f"PID enabled (kp={kp}, ki={ki}, kd={kd}, source={self._pid_source}, max_offset=±{max_off} C, "
-                    f"interval={self._pid_interval_sec}s, filter_alpha={self._pid_filter_alpha}, deriv_on_meas={self._pid_deriv_on_meas}, "
-                    f"integral_band={self._pid_integral_band}, backcalc_k={self._pid_backcalc_k}, sp_rate_limit={self._pid_sp_rate_limit} C/s)"
-                )
+                
+                if not self._pid_two_stage_enabled:
+                    log_message(
+                        f"PID enabled (kp={kp}, ki={ki}, kd={kd}, source={self._pid_source}, max_offset=±{max_off} C, "
+                        f"interval={self._pid_interval_sec}s, filter_alpha={self._pid_filter_alpha}, deriv_on_meas={self._pid_deriv_on_meas}, "
+                        f"integral_band={self._pid_integral_band}, backcalc_k={self._pid_backcalc_k}, sp_rate_limit={self._pid_sp_rate_limit} C/s)"
+                    )
             else:
                 # Clear any previous PID state
                 self._pid = None
@@ -609,6 +769,7 @@ class LynxThermalCycleManager:
                 self._pid_last_update = None
                 self._pid_meas_ema = None
                 self._pid_last_sp_ts = None
+                self._pid_two_stage_enabled = False
 
             # Handle by step type
             if cycle_type == "RAMP":

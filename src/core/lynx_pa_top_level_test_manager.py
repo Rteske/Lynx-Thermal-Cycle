@@ -10,6 +10,7 @@ from instruments.ztm import ZtmModular
 from instruments.daq import RS422_DAQ
 from instruments.hardware_config import get_daq_instance
 from configs.scribe import Scribe
+import datetime as dt
 import logging
 import time
 
@@ -27,10 +28,11 @@ class PaTopLevelTestManager:
         # Import and configure hardware simulation
         from instruments.hardware_config import set_simulation_mode
         set_simulation_mode(sim)
-        
+
         self.simulation_mode = sim
         self.instruments_connection = {"rfpm1_input": True, "rfpm2_output": True, "rfsg": True, "rfsa": True, "na": True, "temp_probe": True, "daq": True}
-        
+        self.telemetry_callback = None  # optional GUI callback
+
         # Always initialize DAQ (real or simulated based on configuration)
         try:
             self.daq = get_daq_instance()
@@ -180,6 +182,71 @@ class PaTopLevelTestManager:
             
             self.scribe = Scribe("LYNX_PA")
             logger.info("Simulation mode initialized - DAQ available: %s", hasattr(self, 'daq') and self.daq is not None)
+
+    # --- GUI/telemetry wiring ---
+    def set_telemetry_callback(self, callback):
+        """Register a GUI telemetry callback compatible with live_view."""
+        self.telemetry_callback = callback
+
+    def _emit_telemetry(self, payload: dict):
+        cb = getattr(self, "telemetry_callback", None)
+        if cb is not None:
+            try:
+                cb(payload)
+            except Exception:
+                pass
+
+    def _emit_periodic_snapshot(self, phase: str = "testing"):
+        """Emit a lightweight telemetry snapshot for the GUI while tests run."""
+        # Read temps
+        tc1 = None
+        tc2 = None
+        try:
+            if isinstance(getattr(self, "temp_probe", None), Agilent34401A):
+                tc1 = self.temp_probe.measure_temp()
+        except Exception:
+            pass
+        try:
+            if isinstance(getattr(self, "temp_probe2", None), Agilent34401A):
+                tc2 = self.temp_probe2.measure_temp()
+        except Exception:
+            pass
+        # PSU snapshot
+        v = c = out = None
+        psu = getattr(self, "power_supply", None)
+        if psu is not None:
+            try:
+                v = psu.get_voltage()
+            except Exception:
+                pass
+            try:
+                c = psu.get_current()
+            except Exception:
+                pass
+            try:
+                out = psu.get_output_state()
+            except Exception:
+                pass
+        payload = {
+            "timestamp": dt.datetime.now(),
+            "step_index": None,
+            "step_name": None,
+            "cycle_type": None,
+            "phase": phase,
+            "target_c": None,
+            "setpoint_c": None,
+            "actual_temp_c": None,
+            "psu_voltage": float(v) if isinstance(v, (int, float)) else None,
+            "psu_current": float(c) if isinstance(c, (int, float)) else None,
+            "psu_output": bool(out) if out is not None else None,
+            "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
+            "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
+            "tests_sig_a_enabled": None,
+            "tests_na_enabled": None,
+            "tests_sig_a_executed": None,
+            "tests_na_executed": None,
+        }
+        self._emit_telemetry(payload)
 
     def process_and_write_module_na_data(self, gain_bucket, phase_bucket, switchpath, ratioed_power):
         freqs = gain_bucket[0]["freqs"]
@@ -517,6 +584,8 @@ class PaTopLevelTestManager:
 
     def run_and_process_tests(self, path, sno, sig_a_tests=False, na_tests=True, golden_tests=False, options={}):
         logger.info("TestManager start | path=%s | S/N=%s | flags={sig_a=%s, na=%s, golden=%s}", path, sno, sig_a_tests, na_tests, golden_tests)
+        # initial snapshot to GUI
+        self._emit_periodic_snapshot(phase="tests-start")
         if sig_a_tests:
             # Run SIG A tests
             logger.info("SIG_A tests: starting")
@@ -532,10 +601,10 @@ class PaTopLevelTestManager:
             power_meter_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["power_meter_filepath"]
             wideband_results_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["wideband_results_filepath"]
 
-
             self.switch_bank.set_all_switches(switchpath)
 
             for frequency in freqs:
+                self._emit_periodic_snapshot(phase="sig_a-setup")
                 output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
                 input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
                 bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
@@ -543,6 +612,7 @@ class PaTopLevelTestManager:
 
                 self.rfsg.set_frequency(frequency=frequency)
                 self.rfsg.set_amplitude(rfsg_input_power)
+                self._emit_periodic_snapshot(phase="sig_a-running")
 
                 if golden_tests:
                     for attenuation_setting in attenuation_settings:
@@ -555,6 +625,7 @@ class PaTopLevelTestManager:
                                 output_loss=output_loss
                             )
                             self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
+                            self._emit_periodic_snapshot(phase="sig_a-power-meter")
                 else:
                     for attenuation_setting in attenuation_settings:
                         for bandwidth in bandwidths:
@@ -568,7 +639,8 @@ class PaTopLevelTestManager:
                             )
 
                             self.process_and_write_module_standard_bandwidth_tests(standard_bucket, standard_results_filepath)
-                        
+                            self._emit_periodic_snapshot(phase="sig_a-standard")
+
                         for waveform in waveforms:
 
                             if frequency in [1.95E+9, 3E+9, 4E+9, 10E+9, 12.5E+9, 15E+9]:
@@ -580,6 +652,7 @@ class PaTopLevelTestManager:
                                     gain_setting=attenuation_setting,
                                 )
                                 self.process_and_write_module_harmonic_tests(harmonic_bucket, harmonic_results_filepath)
+                                self._emit_periodic_snapshot(phase="sig_a-harmonic")
 
                             wideband_bucket = self.sig_a_test.get_harmonics_by_frequency_and_switchpath(
                                 bandpath=bandpath,
@@ -589,6 +662,7 @@ class PaTopLevelTestManager:
                                 gain_setting=attenuation_setting
                             )
                             self.process_and_write_module_harmonic_tests(wideband_bucket, wideband_results_filepath)
+                            self._emit_periodic_snapshot(phase="sig_a-wideband")
 
                             power_meter_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
                                 bandpath=bandpath,
@@ -598,6 +672,7 @@ class PaTopLevelTestManager:
                                 output_loss=output_loss,
                             )
                             self.process_and_write_module_power_meter_tests(power_meter_bucket, power_meter_filepath)
+                            self._emit_periodic_snapshot(phase="sig_a-power-meter")
 
                     self.rfsg.stop()
                     noise_bucket = self.sig_a_test.get_harmonics_by_frequency_and_switchpath(
@@ -608,6 +683,7 @@ class PaTopLevelTestManager:
                         gain_setting=attenuation_setting,
                     )
                     self.process_and_write_module_harmonic_tests(noise_bucket, wideband_results_filepath)
+                    self._emit_periodic_snapshot(phase="sig_a-noise")
 
         if na_tests:
             # 31 Steps of attenuation
@@ -618,13 +694,14 @@ class PaTopLevelTestManager:
             s21_switchpath = self.lynx_config.paths[path]["S21"]["switchpath"]
 
             if golden_tests:
-                attenuation_settings = [0,18,31]
+                attenuation_settings = [0, 18, 31]
             else:
                 attenuation_settings = range(0, 32, 1)
 
             self.switch_bank.set_all_switches(s21_switchpath)
             bandpath = self.lynx_config.get_bandpath_by_path(path)
             for attenuation_setting in attenuation_settings:
+                self._emit_periodic_snapshot(phase="na-setup")
 
                 gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S21", format="MLOG", statefilepath=s21_statefilepath)
                 phase = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S21", format="PHASE", statefilepath=s21_statefilepath)
@@ -632,29 +709,30 @@ class PaTopLevelTestManager:
                 if attenuation_setting == 0:
                     headers = True
                 else:
-                    headers = False 
+                    headers = False
 
                 self.process_and_write_module_S_param(filepath=s21_gain_results_filepath, bucket=gain, headers=headers)
                 self.process_and_write_module_S_param(filepath=s21_phase_results_filepath, bucket=phase, headers=headers)
-
-
+                self._emit_periodic_snapshot(phase="na-s21")
 
             s11_state_filepath = self.lynx_config.paths[path]["S11"]["state_filepath"]
             s11_results_filepath = self.lynx_config.paths[path]["S11"]["results_filepath"]
             s11_switchpath = self.lynx_config.paths[path]["S11"]["switchpath"]
             self.switch_bank.set_all_switches(s11_switchpath)
-            gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath ,gain_setting=attenuation_setting, ratioed_power="S11", format="MLOG", statefilepath=s11_state_filepath)
+            gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S11", format="MLOG", statefilepath=s11_state_filepath)
             self.process_and_write_module_S_param(filepath=s11_results_filepath, bucket=gain, headers=True)
-
+            self._emit_periodic_snapshot(phase="na-s11")
 
             s22_state_filepath = self.lynx_config.paths[path]["S22"]["state_filepath"]
             s22_results_filepath = self.lynx_config.paths[path]["S22"]["results_filepath"]
             s22_switchpath = self.lynx_config.paths[path]["S22"]["switchpath"]
             self.switch_bank.set_all_switches(s22_switchpath)
-            gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath ,gain_setting=attenuation_setting, ratioed_power="S22", format="MLOG", statefilepath=s22_state_filepath)
+            gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S22", format="MLOG", statefilepath=s22_state_filepath)
             self.process_and_write_module_S_param(filepath=s22_results_filepath, bucket=gain, headers=True)
+            self._emit_periodic_snapshot(phase="na-s22")
 
         logger.info("TestManager end | path=%s", path)
+        self._emit_periodic_snapshot(phase="tests-end")
         self.clean_up()
 
 if __name__ == "__main__":
