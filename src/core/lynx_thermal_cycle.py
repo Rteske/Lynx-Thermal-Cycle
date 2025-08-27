@@ -231,26 +231,47 @@ class LynxThermalCycleManager:
                 time.sleep(max(1, int(poll_s)))
                 continue
 
-            # Error is target - measured; apply auto-detected direction sign so delta_sp pushes meas toward target
+            # Error is target - measured
             error = float(target_c - float(meas))
             in_band = abs(error) <= float(target_temp_delta_c)
 
-            # Compute proportional setpoint change with per-iteration clamp
-            delta_sp = kp * error * direction_sign
-            max_step = max(0.1, sp_rate_limit)
-            if delta_sp > max_step:
-                delta_sp = max_step
-            elif delta_sp < -max_step:
-                delta_sp = -max_step
+            # Nominal setpoint is target + offset; asymmetric control:
+            # - When outside band on the "hot" side, pull back from nominal proportionally.
+            # - When outside band on the "cold" side, do not boost above nominal (let chamber controller do the work).
+            sp_nominal = float(target_c + (temp_offset or 0.0))
+            desired_sp = sp_nominal
+            too_hot = float(meas) > (target_c + float(target_temp_delta_c))
+            too_cold = float(meas) < (target_c - float(target_temp_delta_c))
 
-            if not in_band:
-                sp = max(sp_min, min(sp_max, sp + delta_sp))
+            if direction_sign > 0:
+                if too_hot:
+                    # Pull below nominal by proportional amount
+                    desired_sp = max(sp_min, sp_nominal - kp * (float(meas) - target_c))
+                elif too_cold:
+                    # Stay at nominal; don't exceed it
+                    desired_sp = sp_nominal
+            else:  # inverted response
+                if too_cold:
+                    # For inverted systems, increase setpoint below nominal to raise measured temp
+                    desired_sp = min(sp_max, sp_nominal + kp * (target_c - float(meas)))
+                elif too_hot:
+                    desired_sp = sp_nominal
+
+            # Rate-limit the setpoint change
+            max_step = max(0.1, sp_rate_limit)
+            step_change = desired_sp - sp
+            if step_change > max_step:
+                step_change = max_step
+            elif step_change < -max_step:
+                step_change = -max_step
+            if abs(step_change) > 1e-6:
+                sp = max(sp_min, min(sp_max, sp + step_change))
                 self._set_setpoint(sp)
 
             now = time.time()
             if now - last_log >= max(1, int(poll_s)):
                 log_message(
-                    f"PCTRL: tgt={target_c:.2f}C meas={float(meas):.2f}C err={error:.2f}C sp={sp:.2f}C d_sp={delta_sp:.2f}C kp={kp:.2f} lim={sp_rate_limit:.2f}/poll in_band={in_band}"
+                    f"PCTRL: tgt={target_c:.2f}C meas={float(meas):.2f}C err={error:.2f}C sp={sp:.2f}C sp_nom={sp_nominal:.2f}C dir={int(direction_sign)} lim={sp_rate_limit:.2f}/poll hot={too_hot} cold={too_cold} in_band={in_band}"
                 )
                 last_log = now
 
