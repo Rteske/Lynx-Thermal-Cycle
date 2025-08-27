@@ -222,11 +222,13 @@ class LynxThermalCycleManager:
                 tc1_temp = tc1.measure_temp() if tc1 is not None else None
         except (OSError, ValueError):
             pass
+
         try:
             if isinstance(tc2, Agilent34401A):
                 tc2_temp = tc2.measure_temp() if tc2 is not None else None
         except (OSError, ValueError):
             pass
+
         return tc1_temp, tc2_temp
 
     def _log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
@@ -437,11 +439,9 @@ class LynxThermalCycleManager:
                             log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
                         else:
                             consecutive = 0
-                    self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c,
-                                              sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+                    self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
                     time.sleep(max(1, int(poll_s)))
                 log_message("RAMP: target band reached via thermocouples")
-
             elif cycle_type in ("DWELL", "SOAK"):
                 # Wait to be stable within tolerance window, then dwell for the specified time
                 self._wait_until_stable(target_c=target_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s)
@@ -468,7 +468,7 @@ class LynxThermalCycleManager:
                     while time.time() < end:
                         self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=setpoint_c,
                                                   sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
-                        time.sleep(5)
+                        time.sleep(2.5)
 
             # Optional: turn off power after this step
             if getattr(step, "power_off_after", False):
