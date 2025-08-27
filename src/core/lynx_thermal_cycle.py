@@ -1,6 +1,6 @@
 import time
 import re
-from typing import Optional, Callable, Dict, Any, Tuple
+from typing import Optional, Callable, Dict, Any
 import os
 import datetime as dt
 
@@ -147,82 +147,106 @@ class LynxThermalCycleManager:
             log_message(f"Error reading temp_probe: {e}")
 
     def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int, temp_offset: float):
-        sp = target_c + temp_offset
-        start_time = time.time()
-        last_adjust_time = start_time
-        adjust_interval = 30  # seconds
-        # Initial wait before monitoring
+        """Approach target using P-control to within target_temp_delta, then require low movement within a window.
+
+        - P-control phase adjusts chamber setpoint (sp) toward target using error = target - measured.
+        - Settlement phase confirms that the temperature movement (max-min) over the last window_s seconds
+          is <= tol_c, sampled every poll_s seconds. Resets timer if span exceeds tol.
+        """
+        # Parameters
+        sp_min = -80.0
+        sp_max = 120.0
+        kp = float(getattr(self.current_step, "pid_kp", 0.6) or 0.6)
+        sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 3.0) or 3.0)  # degC per poll
+
+        # Initial setpoint with offset
+        sp = float(target_c + (temp_offset or 0.0))
+        self._set_setpoint(sp)
+
+        # Initial delay
         if initial_delay_s and initial_delay_s > 0:
-            log_message(f"Initial delay {initial_delay_s}s before stability monitoring…")
-            # Log during initial delay as well
-            end = time.time() + initial_delay_s
+            log_message(
+                f"INIT: delay={initial_delay_s}s before control | target={target_c:.2f}C, delta={target_temp_delta_c:.2f}C, tol={tol_c:.2f}C"
+            )
+            end = time.time() + int(initial_delay_s)
             while time.time() < end:
-                # Control tracking during initial delay; P-control self-gates until activation
-                self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
-                time.sleep(min(5, initial_delay_s))
+                self._maybe_log_telemetry(phase="init-delay", step=self.current_step, setpoint_c=sp)
+                time.sleep(min(5, max(1, int(poll_s))))
 
-        # Wait for temperature to reach within target temp delta
-        sp = target_c + temp_offset
-        start_time = time.time()
-        last_adjust_time = start_time
-        adjust_interval = 30  # seconds
-
+        # P-control approach to target band
+        last_log = 0.0
         while True:
-            # Check thermocouple readings first
-            _, count_present, vals = self._tcs_within_band(target_c, target_temp_delta_c)
-            in_band = False
-            if count_present > 0:
-                in_band = any(abs(v - target_c) <= target_temp_delta_c for v in vals)
-            else:
-                # Fallback to controller reading
-                curr = self._read_actual_temp()
-                if curr is not None:
-                    in_band = abs(curr - target_c) <= target_temp_delta_c
-
-            if in_band:
-                log_message(f"Temperature within target delta ±{target_temp_delta_c} C of {target_c:.2f} C")
+            meas = self._get_pid_measurement(target_c)
+            if meas is None:
+                meas = self._read_actual_temp()
+            if meas is None:
+                log_message("PCTRL: No measurement available; proceeding to settlement phase")
                 break
 
-            # If not in range for adjust_interval, adjust setpoint
+            error = float(target_c - float(meas))
+            in_band = abs(error) <= float(target_temp_delta_c)
+
+            # Compute proportional setpoint change with per-iteration clamp
+            delta_sp = kp * error
+            max_step = max(0.1, sp_rate_limit)
+            if delta_sp > max_step:
+                delta_sp = max_step
+            elif delta_sp < -max_step:
+                delta_sp = -max_step
+
+            if not in_band:
+                sp = max(sp_min, min(sp_max, sp + delta_sp))
+                self._set_setpoint(sp)
+
             now = time.time()
-            if now - last_adjust_time >= adjust_interval:
-                # Use TC if available, else controller
-                if count_present > 0 and vals:
-                    avg_temp = sum(vals) / len(vals)
-                else:
-                    avg_temp = self._read_actual_temp()
-                if avg_temp is not None:
-                    if avg_temp < target_c - target_temp_delta_c:
-                        sp += 0.5  # nudge up
-                        log_message(f"Setpoint nudged UP to {sp:.2f} C (current avg {avg_temp:.2f} C)")
-                    elif avg_temp > target_c + target_temp_delta_c:
-                        sp -= 0.5  # nudge down
-                        log_message(f"Setpoint nudged DOWN to {sp:.2f} C (current avg {avg_temp:.2f} C)")
-                    self._set_setpoint(sp)
-                last_adjust_time = now
+            if now - last_log >= max(1, int(poll_s)):
+                log_message(
+                    f"PCTRL: tgt={target_c:.2f}C meas={float(meas):.2f}C err={error:.2f}C sp={sp:.2f}C d_sp={delta_sp:.2f}C kp={kp:.2f} lim={sp_rate_limit:.2f}/poll in_band={in_band}"
+                )
+                last_log = now
 
-            self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
+            self._maybe_log_telemetry(phase="pctrl", step=self.current_step, setpoint_c=sp)
+            if in_band:
+                log_message(f"PCTRL: Reached target band ±{float(target_temp_delta_c):.2f}C around {target_c:.2f}C")
+                break
+
             time.sleep(max(1, int(poll_s)))
 
-        # Original single-stage stability logic
-        end_required = time.time() + window_s
+        # Settlement by movement within window
+        window_values: list[tuple[float, float]] = []
+        window_duration = max(1, int(window_s))
+        poll = max(1, int(poll_s))
+        end_required = time.time() + window_duration
         while True:
-            # Prefer thermocouple readings for stability
-            _, count_present, vals = self._tcs_within_band(target_c, tol_c)
-            if count_present > 10:
-                any_ok = any(abs(v - target_c) <= tol_c for v in vals)
-                msg_vals = ", ".join(f"{v:.2f}" for v in vals)
-                log_message(f"TCs [{msg_vals}] C vs target {target_c:.2f} C (tol ±{tol_c:.2f} C) -> {'OK' if any_ok else 'OUT'} (any)")
-                if any_ok:
-                    if time.time() >= end_required:
-                        log_message("Thermocouples (any) stable within tolerance window")
-                        return
-                else:
-                    end_required = time.time() + window_s
-                    log_message("Thermocouples (any) outside tolerance; resetting stability window")
+            meas = self._get_pid_measurement(target_c)
+            if meas is None:
+                meas = self._read_actual_temp()
+            if meas is None:
+                log_message("SETTLE: No measurement; waiting…")
+                time.sleep(poll)
+                continue
 
-            self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
-            time.sleep(max(1, int(poll_s)))
+            now = time.time()
+            window_values.append((now, float(meas)))
+            cutoff = now - window_duration
+            window_values = [(ts, v) for ts, v in window_values if ts >= cutoff]
+
+            vals = [v for _, v in window_values]
+            span = (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
+            log_message(
+                f"SETTLE: n={len(vals)} span={span:.3f}C <= tol={float(tol_c):.3f}C window={window_duration}s poll={poll}s sp={sp:.2f}C tgt={target_c:.2f}C last={float(meas):.2f}C"
+            )
+            self._maybe_log_telemetry(phase="settle", step=self.current_step, setpoint_c=sp)
+
+            if span <= float(tol_c):
+                if now >= end_required:
+                    log_message("SETTLE: Stable — movement within tolerance for the full window")
+                    return
+            else:
+                end_required = now + window_duration
+                log_message("SETTLE: Movement exceeded tolerance — window timer reset")
+
+            time.sleep(poll)
 
     # --------- Telemetry helpers ---------
     def _init_telemetry(self):
@@ -453,10 +477,8 @@ class LynxThermalCycleManager:
 
             # Apply PSU state per step
             self._apply_power_for_step(getattr(step, "voltage", 0.0) or 0.0, getattr(step, "current", 0.0) or 0.0)
-
-            self._set_setpoint(setpoint_c=setpoint_c + offset_c)
-
-            self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=60, poll_s=poll_s, initial_delay_s=10, temp_offset=offset_c)
+            # Apply setpoint once per step; control/wait happens below per type
+            self._set_setpoint(setpoint_c=setpoint_c)
 
             # Handle by step type
             if cycle_type == "RAMP":
