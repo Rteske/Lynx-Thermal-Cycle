@@ -170,7 +170,7 @@ class LynxThermalCycleManager:
         sp_max = 120.0
         kp = float(getattr(self.current_step, "pid_kp", 0.6) or 0.6)
         sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 1.0) or 1.0)  # degC per poll
-        bump_after_s = int(getattr(self.current_step, "pid_bump_after_s", 300) or 300)  # 5 min by default
+        bump_after_s = int(getattr(self.current_step, "pid_bump_after_s", 150) or 150)  # 5 min by default
         bump_c = float(getattr(self.current_step, "pid_bump_c", 2.0) or 2.0)  # degrees C bump
 
         # Initial setpoint with offset
