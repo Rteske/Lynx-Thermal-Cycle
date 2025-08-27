@@ -1,0 +1,26 @@
+[
+  {
+    "step_name": "PROTOQUAL_CYCLES2_15_LOW_-29C",
+    "description": "Cycles 2-15: cycle between -29C and 66C; 4C/min; 1hr dwell + 1hr soak each plateau; ATE logs RF/DC",
+    "temperature": -29.0,
+    "target_temp_delta": 2.0,
+    "temp_controller_offset": 0.0,
+    "pin_pout_tests": true,
+    "na_tests": false,
+    "temp_cycle_type": "CYCLE",
+    "cycle_count": 14,
+    "ramp_rate": 4.0,
+    "high_temp": 66.0,
+    "low_temp": -29.0,
+    "dwell_time_high": 7200,
+    "dwell_time_low": 7200,
+    "total_time": 240,
+    "voltage": 28.0,
+    "current": 2.5,
+    "settlement_tolerance": 0.8,
+    "settlement_window": 600,
+    "monitoring_interval": 10,
+    "initial_delay": 60,
+    "power_off_after": false
+  }
+]
