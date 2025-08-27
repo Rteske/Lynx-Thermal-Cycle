@@ -1,6 +1,6 @@
 import time
 import re
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, Tuple
 import os
 import datetime as dt
 
@@ -67,6 +67,17 @@ class LynxThermalCycleManager:
             log_message(f"Failed to initialize telemetry CSV: {e}")
             self.telemetry_path = None
         self._telemetry_last_ts = 0.0
+        # track current step for telemetry
+        self.current_step = None
+
+        # PID runtime state (per-step)
+        self._pid_enabled = False
+        self._pid_base_setpoint = None
+        self._pid_sp_current = None
+        self._pid_last_ts = None
+        self._pid_source = "avg"  # 'avg' | 'any' | 'controller'
+        self._pid_deadband = 0.0
+        self._pid = None
 
     
 
@@ -132,6 +143,84 @@ class LynxThermalCycleManager:
         all_ok = all(abs(v - target_c) <= tol_c for v in vals)
         return all_ok, len(vals), vals
 
+    # --------- PID helpers ---------
+    class SimplePID:
+        def __init__(self, kp: float, ki: float, kd: float, output_limits: Tuple[float, float] = (-10.0, 10.0)):
+            self.kp = float(kp)
+            self.ki = float(ki)
+            self.kd = float(kd)
+            self.out_min, self.out_max = output_limits
+            self.integral = 0.0
+            self.prev_error: Optional[float] = None
+
+        def reset(self):
+            self.integral = 0.0
+            self.prev_error = None
+
+        def compute(self, error: float, delta_t: float) -> float:
+            delta_t = max(0.05, float(delta_t))
+            # Proportional
+            p = self.kp * error
+            # Integral with simple anti-windup clamp
+            self.integral += error * delta_t
+            # Clamp integral reasonably so it doesn't run away
+            max_int = 10.0 / (self.ki if self.ki != 0 else 1.0)
+            if self.integral > max_int:
+                self.integral = max_int
+            elif self.integral < -max_int:
+                self.integral = -max_int
+            i = self.ki * self.integral
+            # Derivative (on error)
+            d_err = 0.0 if self.prev_error is None else (error - self.prev_error) / delta_t
+            d = self.kd * d_err
+            self.prev_error = error
+            u = p + i + d
+            # Clamp output
+            if u > self.out_max:
+                u = self.out_max
+            elif u < self.out_min:
+                u = self.out_min
+            return u
+
+    def _get_pid_measurement(self, target_c: float) -> Optional[float]:
+        """Select a measurement for PID based on configured source.
+        Prefers thermocouples; falls back to controller reading.
+        """
+        source = (self._pid_source or "avg").lower()
+        tc1, tc2 = self._get_tc_snapshot()
+        vals = [float(v) for v in (tc1, tc2) if isinstance(v, (int, float))]
+        if source in ("avg", "any") and vals:
+            if source == "avg":
+                return sum(vals) / len(vals)
+            # any: pick the one closest to target (most representative)
+            return min(vals, key=lambda v: abs(v - target_c))
+        if source == "controller" or not vals:
+            return self._read_actual_temp()
+        return None
+
+    def _pid_update_if_enabled(self, target_c: float, poll_s: float) -> Optional[float]:
+        """If PID is enabled, compute a new setpoint and push it to the chamber.
+        Returns the setpoint used (or None if not updated)."""
+        if not self._pid_enabled or self._pid is None or self._pid_base_setpoint is None:
+            return None
+        meas = self._get_pid_measurement(target_c)
+        if meas is None:
+            return None
+        # Deadband: reduce chattering
+        error = float(target_c) - float(meas)
+        if self._pid_deadband and abs(error) < self._pid_deadband:
+            error = 0.0
+        now = time.time()
+        delta_t = poll_s if self._pid_last_ts is None else (now - self._pid_last_ts)
+        self._pid_last_ts = now
+        u = self._pid.compute(error, delta_t)
+        new_sp = self._pid_base_setpoint + u
+        # Avoid spamming the controller if change is tiny
+        if self._pid_sp_current is None or abs(new_sp - self._pid_sp_current) >= 0.05:
+            self._set_setpoint(new_sp)
+            self._pid_sp_current = new_sp
+        return self._pid_sp_current
+
     def _wait_until_stable(self, target_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int):
         # Initial wait before monitoring
         if initial_delay_s and initial_delay_s > 0:
@@ -139,7 +228,9 @@ class LynxThermalCycleManager:
             # Log during initial delay as well
             end = time.time() + initial_delay_s
             while time.time() < end:
-                self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
+                # PID tracking during initial delay if enabled
+                sp = self._pid_update_if_enabled(target_c, poll_s=float(poll_s))
+                self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
                 time.sleep(min(5, initial_delay_s))
         # If no thermocouples and no controller, fallback to timed wait
         _, tc_count, _ = self._tcs_within_band(target_c, tol_c)
@@ -147,7 +238,8 @@ class LynxThermalCycleManager:
             log_message(f"[SIM] No temperature feedback; sleeping {window_s}s as stability window")
             end = time.time() + window_s
             while time.time() < end:
-                self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
+                sp = self._pid_update_if_enabled(target_c, poll_s=float(poll_s))
+                self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
                 time.sleep(5)
             return
 
@@ -181,7 +273,8 @@ class LynxThermalCycleManager:
                         log_message("Controller outside tolerance; resetting stability window")
                 else:
                     log_message("No temperature feedback available; continuing")
-            self._maybe_log_telemetry(phase="stabilize", step=self.current_step)
+            sp = self._pid_update_if_enabled(target_c, poll_s=float(poll_s))
+            self._maybe_log_telemetry(phase="stabilize", step=self.current_step, setpoint_c=sp)
             time.sleep(max(1, int(poll_s)))
 
     # --------- Telemetry helpers ---------
@@ -416,6 +509,28 @@ class LynxThermalCycleManager:
             # Set chamber setpoint
             self._set_setpoint(setpoint_c)
 
+            # Initialize optional cascade PID (adjusting setpoint to hit DUT/TC target)
+            self._pid_enabled = bool(getattr(step, "pid_enable", False))
+            if self._pid_enabled:
+                kp = float(getattr(step, "pid_kp", 0.6) or 0.6)
+                ki = float(getattr(step, "pid_ki", 0.05) or 0.05)
+                kd = float(getattr(step, "pid_kd", 0.0) or 0.0)
+                max_off = float(getattr(step, "pid_max_offset", 15.0) or 15.0)
+                self._pid_source = str(getattr(step, "pid_source", "avg") or "avg")
+                self._pid_deadband = float(getattr(step, "pid_deadband", 0.0) or 0.0)
+                self._pid = LynxThermalCycleManager.SimplePID(kp, ki, kd, output_limits=(-abs(max_off), abs(max_off)))
+                self._pid.reset()
+                self._pid_base_setpoint = setpoint_c
+                self._pid_sp_current = setpoint_c
+                self._pid_last_ts = None
+                log_message(f"PID enabled (kp={kp}, ki={ki}, kd={kd}, source={self._pid_source}, max_offset=±{max_off} C)")
+            else:
+                # Clear any previous PID state
+                self._pid = None
+                self._pid_base_setpoint = None
+                self._pid_sp_current = None
+                self._pid_last_ts = None
+
             # Handle by step type
             if cycle_type == "RAMP":
                 # For ramps, wait until we're within target +/- target_temp_delta or for configured dwell time
@@ -455,7 +570,8 @@ class LynxThermalCycleManager:
                     log_message(f"Dwelling at target for {dwell_s}s")
                     end = time.time() + dwell_s
                     while time.time() < end:
-                        self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=setpoint_c,
+                        sp = self._pid_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
+                        self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=sp if sp is not None else setpoint_c,
                                                   sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
                                                   sig_a_executed=sig_a_exec, na_executed=na_exec)
                         time.sleep(2.5)
@@ -466,7 +582,8 @@ class LynxThermalCycleManager:
                 if dwell_s > 0:
                     end = time.time() + dwell_s
                     while time.time() < end:
-                        self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=setpoint_c,
+                        sp = self._pid_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
+                        self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=sp if sp is not None else setpoint_c,
                                                   sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
                         time.sleep(2.5)
 
@@ -475,7 +592,15 @@ class LynxThermalCycleManager:
                 self._power_off()
 
             # Log end of step
-            self._log_telemetry(phase="step_complete", step=step, setpoint_c=setpoint_c,
+            final_sp = self._pid_sp_current if (self._pid_enabled and self._pid_sp_current is not None) else setpoint_c
+            self._log_telemetry(phase="step_complete", step=step, setpoint_c=final_sp,
                                 sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+
+            # Clear PID after each step
+            self._pid_enabled = False
+            self._pid = None
+            self._pid_base_setpoint = None
+            self._pid_sp_current = None
+            self._pid_last_ts = None
 
         log_message("Thermal cycle complete")
