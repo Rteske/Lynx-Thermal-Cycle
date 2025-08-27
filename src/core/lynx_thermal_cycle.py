@@ -170,6 +170,8 @@ class LynxThermalCycleManager:
         sp_max = 120.0
         kp = float(getattr(self.current_step, "pid_kp", 0.6) or 0.6)
         sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 1.0) or 1.0)  # degC per poll
+        bump_after_s = int(getattr(self.current_step, "pid_bump_after_s", 300) or 300)  # 5 min by default
+        bump_c = float(getattr(self.current_step, "pid_bump_c", 2.0) or 2.0)  # degrees C bump
 
         # Initial setpoint with offset
         sp = float(target_c + (temp_offset or 0.0))
@@ -218,6 +220,7 @@ class LynxThermalCycleManager:
                 log_message("PCTRL: control source = controller (fallback)")
         except (RuntimeError, OSError, ValueError):
             pass
+
         while True:
             meas = read_control_meas()
             if meas is None:
@@ -235,27 +238,41 @@ class LynxThermalCycleManager:
             error = float(target_c - float(meas))
             in_band = abs(error) <= float(target_temp_delta_c)
 
-            # Nominal setpoint is target + offset; asymmetric control:
-            # - When outside band on the "hot" side, pull back from nominal proportionally.
-            # - When outside band on the "cold" side, do not boost above nominal (let chamber controller do the work).
+            # Nominal setpoint is target + offset; asymmetric control with optional bump after prolonged approach
             sp_nominal = float(target_c + (temp_offset or 0.0))
             desired_sp = sp_nominal
             too_hot = float(meas) > (target_c + float(target_temp_delta_c))
             too_cold = float(meas) < (target_c - float(target_temp_delta_c))
 
+            elapsed = time.time() - approach_start
             if direction_sign > 0:
                 if too_hot:
                     # Pull below nominal by proportional amount
                     desired_sp = max(sp_min, sp_nominal - kp * (float(meas) - target_c))
+                    # Ensure minimum bump after prolonged approach
+                    if elapsed >= bump_after_s and desired_sp > sp_nominal - bump_c:
+                        desired_sp = sp_nominal - bump_c
+                        log_message(f"PCTRL: >{bump_after_s}s hot — bumping setpoint to {desired_sp:.2f}C (−{bump_c:.2f}C)")
                 elif too_cold:
-                    # Stay at nominal; don't exceed it
-                    desired_sp = sp_nominal
+                    # Stay at nominal initially; after delay, allow boost above nominal
+                    if elapsed >= bump_after_s:
+                        desired_sp = min(sp_max, sp_nominal + bump_c)
+                        log_message(f"PCTRL: >{bump_after_s}s cold — bumping setpoint to {desired_sp:.2f}C (+{bump_c:.2f}C)")
+                    else:
+                        desired_sp = sp_nominal
             else:  # inverted response
                 if too_cold:
-                    # For inverted systems, increase setpoint below nominal to raise measured temp
+                    # For inverted systems, increase setpoint above nominal to raise measured temp
                     desired_sp = min(sp_max, sp_nominal + kp * (target_c - float(meas)))
+                    if elapsed >= bump_after_s and desired_sp < sp_nominal + bump_c:
+                        desired_sp = sp_nominal + bump_c
+                        log_message(f"PCTRL: >{bump_after_s}s cold (inv) — bumping setpoint to {desired_sp:.2f}C (+{bump_c:.2f}C)")
                 elif too_hot:
-                    desired_sp = sp_nominal
+                    if elapsed >= bump_after_s:
+                        desired_sp = max(sp_min, sp_nominal - bump_c)
+                        log_message(f"PCTRL: >{bump_after_s}s hot (inv) — bumping setpoint to {desired_sp:.2f}C (−{bump_c:.2f}C)")
+                    else:
+                        desired_sp = sp_nominal
 
             # Rate-limit the setpoint change
             max_step = max(0.1, sp_rate_limit)
