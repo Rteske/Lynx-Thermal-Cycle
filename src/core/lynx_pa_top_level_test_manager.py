@@ -1,13 +1,8 @@
-import pyvisa
+try:
+    import pyvisa  # type: ignore
+except Exception:  # Allow running in simulation without pyvisa installed
+    pyvisa = None
 from src.core.lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
-from instruments.power_meter import E4418BPowerMeter
-from instruments.power_supply import PowerSupply
-from instruments.signal_generator import E4438CSignalGenerator
-from instruments.temp_probe import Agilent34401A
-from instruments.signal_analyzer import MXASignalAnalyzer
-from instruments.network_analyzer import PNAXNetworkAnalyzer
-from instruments.ztm import ZtmModular  
-from instruments.daq import RS422_DAQ
 from instruments.hardware_config import get_daq_instance
 from configs.scribe import Scribe
 import datetime as dt
@@ -43,6 +38,17 @@ class PaTopLevelTestManager:
             logger.warning("DAQ NOT connected")
         
         if not sim:
+            # Import instrument drivers lazily to avoid requiring them in simulation mode
+            from instruments.power_meter import E4418BPowerMeter
+            from instruments.power_supply import PowerSupply
+            from instruments.signal_generator import E4438CSignalGenerator
+            from instruments.temp_probe import Agilent34401A
+            from instruments.signal_analyzer import MXASignalAnalyzer
+            from instruments.network_analyzer import PNAXNetworkAnalyzer
+            from instruments.ztm import ZtmModular
+
+            if pyvisa is None:
+                raise RuntimeError("pyvisa is required for non-sim mode but is not installed")
             self.rm = pyvisa.ResourceManager()
             self.instruments = self.rm.list_resources()
             logger.info("Discovered VISA resources: %s", self.instruments)
@@ -202,13 +208,15 @@ class PaTopLevelTestManager:
         tc1 = None
         tc2 = None
         try:
-            if isinstance(getattr(self, "temp_probe", None), Agilent34401A):
-                tc1 = self.temp_probe.measure_temp()
+            tp = getattr(self, "temp_probe", None)
+            if tp is not None and hasattr(tp, "measure_temp"):
+                tc1 = tp.measure_temp()
         except Exception:
             pass
         try:
-            if isinstance(getattr(self, "temp_probe2", None), Agilent34401A):
-                tc2 = self.temp_probe2.measure_temp()
+            tp2 = getattr(self, "temp_probe2", None)
+            if tp2 is not None and hasattr(tp2, "measure_temp"):
+                tc2 = tp2.measure_temp()
         except Exception:
             pass
         # PSU snapshot
@@ -556,10 +564,21 @@ class PaTopLevelTestManager:
 
     def clean_up(self):
         logger.info("Cleanup: disabling RF, stopping RFSG, resetting switches")
-        self.daq.disable_rf()
-        self.rfsg.stop()
-        # self.power_supply.get_output_state(False)
-        self.switch_bank.reset_all_switches()
+        try:
+            if getattr(self, "daq", None) is not None:
+                self.daq.disable_rf()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "rfsg", None) is not None:
+                self.rfsg.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "switch_bank", None) is not None:
+                self.switch_bank.reset_all_switches()
+        except Exception:
+            pass
 
     def run_state_process(self, path, gain_setting, measurement_type, options={}):
         logger.info("run_state_process | path=%s | gain=%s | type=%s | options=%s", path, gain_setting, measurement_type, options)

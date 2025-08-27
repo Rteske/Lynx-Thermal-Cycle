@@ -13,13 +13,11 @@ except ImportError:
         pass
 
 # Temp probe accessed via duck typing (measure_temp())
-from src.core.lynx_pa_top_level_test_manager import PaTopLevelTestManager
 from src.core.temp import TempProfileManager
-from instruments.temp_controller import TempController
 from src.utils.logging_utils import log_message
 
 class LynxThermalCycleManager:
-    def __init__(self, simulation_mode=False):
+    def __init__(self, simulation_mode=False, dwell_scale: float = 1.0):
         """
         Initialize the Lynx Thermal Cycle Manager.
         
@@ -27,13 +25,55 @@ class LynxThermalCycleManager:
             simulation_mode (bool): If True, uses simulated instruments. If False, uses real hardware.
         """
         self.simulation_mode = simulation_mode
-        self.test_manager = PaTopLevelTestManager(sim=simulation_mode)
+        # Scale factor for dwell/initial delays (e.g., 0.02 makes 1 minute -> ~1.2s)
+        try:
+            self.dwell_scale = float(dwell_scale)
+        except (TypeError, ValueError):
+            self.dwell_scale = 1.0
+        # Minimal stub to allow simulation without importing heavy instrument stack
+        class _SimPowerSupply:
+            def __init__(self):
+                self._v = None
+                self._c = None
+                self._out = False
+            def set_voltage(self, v: float):
+                self._v = float(v)
+            def set_current(self, c: float):
+                self._c = float(c)
+            def set_output_state(self, on: bool):
+                self._out = bool(on)
+            def get_voltage(self):
+                return self._v
+            def get_current(self):
+                return self._c
+            def get_output_state(self):
+                return self._out
+
+        class _SimTestManager:
+            def __init__(self):
+                self.instruments_connection = {"rfsa": False, "na": False, "daq": False}
+                self.paths = ["SIM_PATH"]
+                self.temp_probe = None
+                self.temp_probe2 = None
+                self.power_supply = _SimPowerSupply()
+            def run_and_process_tests(self, *args, **kwargs):
+                _ = (args, kwargs)
+                return None
+
+        if simulation_mode:
+            self.test_manager = _SimTestManager()
+        else:
+            # Lazy import to avoid pyvisa/serial requirements in simulation
+            from src.core.lynx_pa_top_level_test_manager import PaTopLevelTestManager  # type: ignore
+            self.test_manager = PaTopLevelTestManager(sim=False)
         self.temp_profile_manager = None
         self.telemetry_callback = None  # set via set_telemetry_callback
 
         # Initialize temperature controller and turn chamber ON
         try:
             if not simulation_mode:
+                # Lazy import to avoid requiring pyserial in simulation mode
+                from instruments.temp_controller import TempController  # type: ignore
                 self.temp_controller = TempController()
                 self.temp_controller.set_chamber_state(True)
                 self.temp_channel = 1
@@ -159,156 +199,44 @@ class LynxThermalCycleManager:
             log_message(f"Error reading temp_probe: {e}")
 
     def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int, temp_offset: float):
-        """Approach target using P-control to within target_temp_delta, then require low movement within a window.
+        """Set the setpoint once, then wait until movement is within tolerance for a full window and within target band.
 
-        - P-control phase adjusts chamber setpoint (sp) toward target using error = target - measured.
-        - Settlement phase confirms that the temperature movement (max-min) over the last window_s seconds
-          is <= tol_c, sampled every poll_s seconds. Resets timer if span exceeds tol.
+        No proportional or PID control is applied here.
         """
-        # Parameters
-        sp_min = -80.0
-        sp_max = 120.0
-        kp = float(getattr(self.current_step, "pid_kp", 0.6) or 0.6)
-        sp_rate_limit = float(getattr(self.current_step, "pid_sp_rate_limit", 1.0) or 1.0)  # degC per poll
-        bump_after_s = int(getattr(self.current_step, "pid_bump_after_s", 300) or 300)  # 5 min by default
-        bump_c = float(getattr(self.current_step, "pid_bump_c", 2.0) or 2.0)  # degrees C bump
-
-        # Initial setpoint with offset
+        # Apply setpoint once (target + offset)
         sp = float(target_c + (temp_offset or 0.0))
         self._set_setpoint(sp)
 
-        # Lock a measurement source for the entire step (prefer TC1)
-        def read_control_meas() -> Optional[float]:
+        # Measurement function (prefer TC1; fallback to controller)
+        def read_meas() -> Optional[float]:
             v = self._get_pid_measurement(target_c)
             return v if isinstance(v, (int, float)) else self._read_actual_temp()
 
-        # Initial delay
-        if initial_delay_s and initial_delay_s > 0:
+        # Optional initial delay
+        # Apply dwell scaling to initial delay
+        try:
+            scaled_initial_delay = int(max(0, float(initial_delay_s)) * max(0.01, float(self.dwell_scale)))
+        except (TypeError, ValueError):
+            scaled_initial_delay = int(initial_delay_s)
+        if scaled_initial_delay and scaled_initial_delay > 0:
             log_message(
-                f"INIT: delay={initial_delay_s}s before control | target={target_c:.2f}C, delta={target_temp_delta_c:.2f}C, tol={tol_c:.2f}C"
+                f"INIT: delay={scaled_initial_delay}s before settlement | target={target_c:.2f}C, band=±{float(target_temp_delta_c):.2f}C, tol={tol_c:.2f}C"
             )
-            end = time.time() + int(initial_delay_s)
+            end = time.time() + scaled_initial_delay
             while time.time() < end:
                 self._maybe_log_telemetry(phase="init-delay", step=self.current_step, setpoint_c=sp)
                 time.sleep(min(5, max(1, int(poll_s))))
 
-        # P-control approach to target band
-        last_log = 0.0
-        approach_start = time.time()
-        # Max approach time: 30 min default; if quick windows, still give at least 2x window
-        max_approach_time_s = max(30 * 60, 2 * int(window_s))
-        missing_meas_count = 0
-
-        # Detect control direction sign: positive means increasing setpoint increases measurement
-        direction_sign = 1.0
-        try:
-            m0 = read_control_meas()
-            # Log control source once
-            if isinstance(m0, (int, float)):
-                log_message("PCTRL: control source = TC1 (temp_probe)")
-                self._set_setpoint(sp + 1.0)
-                time.sleep(max(1, int(poll_s)))
-                m1 = read_control_meas()
-                if isinstance(m1, (int, float)) and m0 is not None:
-                    if (m1 - m0) < 0:
-                        direction_sign = -1.0
-                        log_message("PCTRL: Auto-detected inverted response (direction_sign = -1)")
-                # revert setpoint back near original
-                sp = float(target_c + (temp_offset or 0.0))
-                self._set_setpoint(sp)
-            else:
-                log_message("PCTRL: control source = controller (fallback)")
-        except (RuntimeError, OSError, ValueError):
-            pass
-
-        while True:
-            meas = read_control_meas()
-            if meas is None:
-                missing_meas_count += 1
-                if self.simulation_mode and missing_meas_count >= 3:
-                    log_message("PCTRL: No measurement (SIM) — skipping approach and proceeding to settlement")
-                    break
-                if (time.time() - approach_start) > max_approach_time_s:
-                    log_message("PCTRL: No measurement; approach timeout reached — proceeding to settlement")
-                    break
-                time.sleep(max(1, int(poll_s)))
-                continue
-
-            # Error is target - measured
-            error = float(target_c - float(meas))
-            in_band = abs(error) <= float(target_temp_delta_c)
-
-            # Nominal setpoint is target + offset; asymmetric control with optional bump after prolonged approach
-            sp_nominal = float(target_c + (temp_offset or 0.0))
-            desired_sp = sp_nominal
-            too_hot = float(meas) > (target_c + float(target_temp_delta_c))
-            too_cold = float(meas) < (target_c - float(target_temp_delta_c))
-
-            elapsed = time.time() - approach_start
-            if direction_sign > 0:
-                if too_hot:
-                    # Pull below nominal by proportional amount
-                    desired_sp = max(sp_min, sp_nominal - kp * (float(meas) - target_c))
-                    # Ensure minimum bump after prolonged approach
-                    if elapsed >= bump_after_s and desired_sp > sp_nominal - bump_c:
-                        desired_sp = sp_nominal - bump_c
-                        log_message(f"PCTRL: >{bump_after_s}s hot — bumping setpoint to {desired_sp:.2f}C (−{bump_c:.2f}C)")
-                elif too_cold:
-                    # Stay at nominal initially; after delay, allow boost above nominal
-                    if elapsed >= bump_after_s:
-                        desired_sp = min(sp_max, sp_nominal + bump_c)
-                        log_message(f"PCTRL: >{bump_after_s}s cold — bumping setpoint to {desired_sp:.2f}C (+{bump_c:.2f}C)")
-                    else:
-                        desired_sp = sp_nominal
-            else:  # inverted response
-                if too_cold:
-                    # For inverted systems, increase setpoint above nominal to raise measured temp
-                    desired_sp = min(sp_max, sp_nominal + kp * (target_c - float(meas)))
-                    if elapsed >= bump_after_s and desired_sp < sp_nominal + bump_c:
-                        desired_sp = sp_nominal + bump_c
-                        log_message(f"PCTRL: >{bump_after_s}s cold (inv) — bumping setpoint to {desired_sp:.2f}C (+{bump_c:.2f}C)")
-                elif too_hot:
-                    if elapsed >= bump_after_s:
-                        desired_sp = max(sp_min, sp_nominal - bump_c)
-                        log_message(f"PCTRL: >{bump_after_s}s hot (inv) — bumping setpoint to {desired_sp:.2f}C (−{bump_c:.2f}C)")
-                    else:
-                        desired_sp = sp_nominal
-
-            # Rate-limit the setpoint change
-            max_step = max(0.1, sp_rate_limit)
-            step_change = desired_sp - sp
-            if step_change > max_step:
-                step_change = max_step
-            elif step_change < -max_step:
-                step_change = -max_step
-            if abs(step_change) > 1e-6:
-                sp = max(sp_min, min(sp_max, sp + step_change))
-                self._set_setpoint(sp)
-
-            now = time.time()
-            if now - last_log >= max(1, int(poll_s)):
-                log_message(
-                    f"PCTRL: tgt={target_c:.2f}C meas={float(meas):.2f}C err={error:.2f}C sp={sp:.2f}C sp_nom={sp_nominal:.2f}C dir={int(direction_sign)} lim={sp_rate_limit:.2f}/poll hot={too_hot} cold={too_cold} in_band={in_band}"
-                )
-                last_log = now
-
-            self._maybe_log_telemetry(phase="pctrl", step=self.current_step, setpoint_c=sp)
-            if in_band:
-                log_message(f"PCTRL: Reached target band ±{float(target_temp_delta_c):.2f}C around {target_c:.2f}C")
-                break
-
-            time.sleep(max(1, int(poll_s)))
-
-        # Settlement by movement within window
+        # Settlement by movement within window AND inside target band
         window_values: list[tuple[float, float]] = []
         window_duration = max(1, int(window_s))
         poll = max(1, int(poll_s))
         end_required = time.time() + window_duration
         missing_meas_count = 0
         settle_start = time.time()
-        max_settle_time_s = max(60 * 60, 2 * window_duration)  # 1 hour or 2x window, whichever larger
+        max_settle_time_s = max(60 * 60, 2 * window_duration)
         while True:
-            meas = read_control_meas()
+            meas = read_meas()
             if meas is None:
                 missing_meas_count += 1
                 if self.simulation_mode and missing_meas_count >= 3:
@@ -328,18 +256,20 @@ class LynxThermalCycleManager:
 
             vals = [v for _, v in window_values]
             span = (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
+            band_err = abs(float(meas) - float(target_c))
+            in_band = band_err <= float(target_temp_delta_c)
+
             log_message(
-                f"SETTLE: n={len(vals)} span={span:.3f}C <= tol={float(tol_c):.3f}C window={window_duration}s poll={poll}s sp={sp:.2f}C tgt={target_c:.2f}C last={float(meas):.2f}C"
+                f"SETTLE: n={len(vals)} span={span:.3f}C tol={float(tol_c):.3f}C band_err={band_err:.3f}C band=±{float(target_temp_delta_c):.2f}C in_band={in_band} window={window_duration}s"
             )
             self._maybe_log_telemetry(phase="settle", step=self.current_step, setpoint_c=sp)
 
-            if span <= float(tol_c):
+            if span <= float(tol_c) and in_band:
                 if now >= end_required:
-                    log_message("SETTLE: Stable — movement within tolerance for the full window")
+                    log_message("SETTLE: Stable — within tolerance and band for the full window")
                     return
             else:
                 end_required = now + window_duration
-                log_message("SETTLE: Movement exceeded tolerance — window timer reset")
 
             time.sleep(poll)
 
@@ -558,7 +488,10 @@ class LynxThermalCycleManager:
             poll_s = int(getattr(step, "monitoring_interval", 3) or 3)
             initial_delay_s = int(getattr(step, "initial_delay", 60) or 60)
             dwell_min = float(getattr(step, "total_time", 0) or 0)
-            dwell_s = int(dwell_min * 60)
+            try:
+                dwell_s = int(float(dwell_min) * 60 * max(0.01, float(self.dwell_scale)))
+            except (TypeError, ValueError):
+                dwell_s = int(dwell_min * 60)
             cycle_type = getattr(step, "temp_cycle_type", "").upper()
             self.current_step = step
             log_message("-" * 60)
@@ -582,24 +515,27 @@ class LynxThermalCycleManager:
                 log_message(f"RAMP: waiting for thermocouples within ±{target_delta} C of target")
                 # Use a shorter window for ramp approach: hold within band for 2 consecutive polls
                 consecutive_needed = 2
-                consecutive = 0
-                while consecutive < consecutive_needed:
-                    _, count_present, vals = self._tcs_within_band(target_c, target_delta)
-                    if count_present > 0:
-                        any_ok = any(abs(v - target_c) <= target_delta for v in vals)
-                        consecutive = consecutive + 1 if any_ok else 0
-                        msg_vals = ", ".join(f"{v:.2f}" for v in vals)
-                        log_message(f"RAMP TC check [{msg_vals}] vs {target_c:.2f} ±{target_delta:.2f} -> {'OK' if any_ok else 'OUT'} (any) ({consecutive}/{consecutive_needed})")
-                    else:
-                        # Fallback to controller if no TCs available
-                        curr = self._read_actual_temp()
-                        if curr is not None and abs(curr - target_c) <= target_delta:
-                            consecutive += 1
-                            log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
+                if self.simulation_mode:
+                    log_message("RAMP: SIM mode — treating band reached immediately")
+                else:
+                    consecutive = 0
+                    while consecutive < consecutive_needed:
+                        _, count_present, vals = self._tcs_within_band(target_c, target_delta)
+                        if count_present > 0:
+                            any_ok = any(abs(v - target_c) <= target_delta for v in vals)
+                            consecutive = consecutive + 1 if any_ok else 0
+                            msg_vals = ", ".join(f"{v:.2f}" for v in vals)
+                            log_message(f"RAMP TC check [{msg_vals}] vs {target_c:.2f} ±{target_delta:.2f} -> {'OK' if any_ok else 'OUT'} (any) ({consecutive}/{consecutive_needed})")
                         else:
-                            consecutive = 0
-                    self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
-                    time.sleep(max(1, int(poll_s)))
+                            # Fallback to controller if no TCs available
+                            curr = self._read_actual_temp()
+                            if curr is not None and abs(curr - target_c) <= target_delta:
+                                consecutive += 1
+                                log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
+                            else:
+                                consecutive = 0
+                        self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+                        time.sleep(max(1, int(poll_s)))
                 log_message("RAMP: target band reached via thermocouples")
             elif cycle_type in ("DWELL", "SOAK"):
                 # Wait to be stable within tolerance window, then dwell for the specified time

@@ -22,10 +22,19 @@ import json
 import os
 import sys
 import time
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from instruments.temp_controller import TempController
-from instruments.temp_probe import Agilent34401A, DracalTempProbe
+if TYPE_CHECKING:  # only for type checkers; avoid runtime imports
+    from instruments.temp_controller import TempController as _TempController
+
+# Ensure project root is importable when running this script directly
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# Instrument modules are imported lazily where needed to avoid requiring
+# optional dependencies (e.g., pyserial, pyvisa) when just showing --help.
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
@@ -53,15 +62,17 @@ class ProbeReader:
         if visa:
             self.kind = "agilent"
             print(f"[DEBUG] Creating Agilent34401A probe with VISA: {visa}")
+            from instruments.temp_probe import Agilent34401A  # lazy import
             self._probe = Agilent34401A(visa)
-            print(f"[DEBUG] Agilent34401A probe created successfully")
+            print("[DEBUG] Agilent34401A probe created successfully")
         elif dracal_sno:
             self.kind = "dracal"
             print(f"[DEBUG] Creating DracalTempProbe with serial: {dracal_sno}")
+            from instruments.temp_probe import DracalTempProbe  # lazy import
             self._probe = DracalTempProbe(dracal_sno)
-            print(f"[DEBUG] DracalTempProbe created successfully")
+            print("[DEBUG] DracalTempProbe created successfully")
         else:
-            print(f"[ERROR] No probe specified - need either --visa or --dracal-sno")
+            print("[ERROR] No probe specified - need either --visa or --dracal-sno")
             raise SystemExit("Provide either --visa for Agilent 34401A or --dracal-sno for Dracal probe")
 
     def read_c(self) -> Optional[float]:
@@ -70,7 +81,7 @@ class ProbeReader:
             val = self._probe.measure_temp()
             print(f"[DEBUG] Raw probe reading: {val} (type: {type(val)})")
             if val is None:
-                print(f"[DEBUG] Probe returned None")
+                print("[DEBUG] Probe returned None")
                 return None
             # Agilent path returns a float already; Dracal returns bytes slice in current impl
             if isinstance(val, (bytes, bytearray)):
@@ -94,7 +105,7 @@ class ProbeReader:
                     print(f"[DEBUG] Converted string to float: {result}")
                     return result
                 except (ValueError, TypeError):
-                    print(f"[DEBUG] Failed to convert string to float, trying regex...")
+                    print("[DEBUG] Failed to convert string to float, trying regex...")
                     import re
 
                     m = re.search(r"[-+]?\d+(?:\.\d+)?", val)
@@ -110,7 +121,7 @@ class ProbeReader:
 
 
 def calibrate_single(
-    ctrl: TempController,
+    ctrl: "_TempController",
     probe: ProbeReader,
     chan: int,
     target: float,
@@ -132,7 +143,7 @@ def calibrate_single(
     # Determine starting setpoint
     current_sp = start_setpoint
     if current_sp is None:
-        print(f"[DEBUG] No start setpoint provided, querying controller...")
+        print("[DEBUG] No start setpoint provided, querying controller...")
         try:
             raw_sp = ctrl.query_setpoint(chan)
             print(f"[DEBUG] Controller returned setpoint: {raw_sp}")
@@ -155,19 +166,19 @@ def calibrate_single(
     print(f"[DEBUG] CSV log path: {csv_path}")
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     if not os.path.exists(csv_path):
-        print(f"[DEBUG] Creating new CSV file with headers")
+        print("[DEBUG] Creating new CSV file with headers")
         with open(csv_path, "w", encoding="utf-8") as f:
             f.write(
                 "timestamp,iter,setpoint_c,controller_actual_c,probe_c,delta_to_target_c,action,new_setpoint_c\n"
             )
     else:
-        print(f"[DEBUG] CSV file already exists")
+        print("[DEBUG] CSV file already exists")
 
     # Ensure starting setpoint is applied
     print(f"[DEBUG] Setting initial setpoint to {current_sp}°C")
     try:
         ctrl.set_setpoint(chan, float(current_sp))
-        print(f"[DEBUG] Setpoint set successfully")
+        print("[DEBUG] Setpoint set successfully")
     except (OSError, RuntimeError, ValueError) as e:
         print(f"[ERROR] Failed to set initial setpoint: {e}")
 
@@ -189,7 +200,7 @@ def calibrate_single(
     initial_settle = max(0.5, min(settle, 5))
     print(f"[DEBUG] Initial settle time: {initial_settle}s")
     time.sleep(initial_settle)
-    print(f"[DEBUG] Initial settle complete, starting calibration loop")
+    print("[DEBUG] Initial settle complete, starting calibration loop")
 
     while iter_idx < int(max_iters):
         print(f"\n[DEBUG] === Iteration {iter_idx} ===")
@@ -241,7 +252,7 @@ def calibrate_single(
                 break
         else:
             consecutive_ok = 0
-            print(f"[DEBUG] Not within tolerance, reset consecutive_ok to 0")
+            print("[DEBUG] Not within tolerance, reset consecutive_ok to 0")
 
         # Adjust setpoint
         adjustment = float(kp) * delta
@@ -253,7 +264,7 @@ def calibrate_single(
         print(f"[DEBUG] Applying new setpoint: {new_sp}°C")
         try:
             ctrl.set_setpoint(chan, new_sp)
-            print(f"[DEBUG] Setpoint applied successfully")
+            print("[DEBUG] Setpoint applied successfully")
         except (OSError, RuntimeError, ValueError) as e:
             print(f"[ERROR] Failed to set setpoint: {e}")
             
@@ -267,12 +278,12 @@ def calibrate_single(
         print(f"[DEBUG] Iteration {iter_idx-1} complete, moving to next iteration")
 
     print(f"\n[DEBUG] Calibration loop finished after {iter_idx} iterations")
-    print(f"[DEBUG] Taking final readings...")
+    print("[DEBUG] Taking final readings...")
     final_probe = probe.read_c()
     final_ctrl = read_controller_actual()
     offset = float(current_sp) - float(target)
     
-    print(f"[DEBUG] Final calculations:")
+    print("[DEBUG] Final calculations:")
     print(f"[DEBUG] - Final probe reading: {final_probe}°C")
     print(f"[DEBUG] - Final controller reading: {final_ctrl}°C")
     print(f"[DEBUG] - Final setpoint: {current_sp}°C")
@@ -284,7 +295,8 @@ def calibrate_single(
     )
 
     converged = final_probe is not None and abs(float(final_probe) - float(target)) <= float(tol)
-    print(f"[DEBUG] Converged: {converged} (final error: {None if final_probe is None else abs(final_probe - target):.3f}°C)")
+    final_err = None if final_probe is None else abs(float(final_probe) - float(target))
+    print(f"[DEBUG] Converged: {converged} (final error: {'n/a' if final_err is None else f'{final_err:.3f}'}°C)")
     
     result = {
         "target_c": float(target),
@@ -300,7 +312,7 @@ def calibrate_single(
 
 def main():
     print("[DEBUG] Starting temp_offset_tool main()")
-    parser = argparse.ArgumentParser(description="Calibrate temp controller setpoint offset using a probe")
+    parser = argparse.ArgumentParser(description="Calibrate temp controller setpoint offset using a probe or a full profile")
     parser.add_argument("--target", type=float, help="Target probe temperature in C")
     parser.add_argument("--tol", type=float, default=0.3, help="Tolerance band on probe temperature (C)")
     parser.add_argument("--kp", type=float, default=0.8, help="Proportional gain for setpoint adjustment")
@@ -325,12 +337,17 @@ def main():
         help="Where to write resulting offset JSON",
     )
     parser.add_argument("--no-chamber-on", action="store_true", help="Skip turning the chamber ON at start")
+    parser.add_argument("--profile", type=str, help="Path to a profile JSON to walk temps and compute offsets")
+    parser.add_argument("--psu", type=str, default="GPIB0::15::INSTR", help="VISA for PSU to set voltage/current per step")
+    parser.add_argument("--profile-poll", type=float, default=2.0, help="Seconds between polls when sampling a step in profile mode")
+    parser.add_argument("--profile-sample", type=int, default=45, help="Seconds to sample per step in profile mode (short)")
 
     args = parser.parse_args()
     print(f"[DEBUG] Parsed arguments: {vars(args)}")
 
     # Initialize hardware
     print("[DEBUG] Initializing TempController...")
+    from instruments.temp_controller import TempController  # lazy import
     ctrl = TempController()
     print("[DEBUG] TempController created successfully")
     
@@ -347,9 +364,25 @@ def main():
     else:
         print("[DEBUG] Skipping chamber ON due to --no-chamber-on flag")
         
-    visa = "GPIB0::29::INSTR"
-    print(f"[DEBUG] Using hardcoded VISA address: {visa}")
-    probe = ProbeReader(visa=visa)
+    # Initialize probe based on provided flags (don't force a VISA default)
+    if args.visa:
+        print(f"[DEBUG] Using VISA address: {args.visa}")
+    elif args.dracal_sno:
+        print(f"[DEBUG] Using Dracal S/N: {args.dracal_sno}")
+    else:
+        print("[ERROR] No probe specified. Provide --visa or --dracal-sno")
+        raise SystemExit(2)
+    probe = ProbeReader(visa=args.visa, dracal_sno=args.dracal_sno)
+
+    # If profile mode, prepare PSU
+    psu = None
+    if args.profile:
+        try:
+            from instruments.power_supply import PowerSupply  # lazy import
+            psu = PowerSupply(args.psu)
+            print("[DEBUG] PSU initialized")
+        except (OSError, RuntimeError, ValueError) as e:
+            print(f"[WARN] PSU not available: {e}")
     # Determine if multi-point or single
     targets_list: Optional[list[float]] = None
     if args.standard_multipoint:
@@ -376,6 +409,107 @@ def main():
     except (OSError, RuntimeError) as e:
         print(f"[ERROR] Failed to query start setpoint: {e}")
         start_sp = None
+
+    # Profile mode: walk steps, apply voltage/current, sample probe to compute setpoint offsets
+    if args.profile:
+        print(f"[DEBUG] Profile mode enabled: {args.profile}")
+        try:
+            with open(args.profile, "r", encoding="utf-8") as f:
+                profile = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"[ERROR] Failed to read profile: {e}")
+            return 2
+
+        steps = profile if isinstance(profile, list) else profile.get("steps") or profile
+        if not isinstance(steps, list):
+            print("[ERROR] Profile JSON does not contain a list of steps")
+            return 2
+
+        chan = int(args.channel)
+        offsets_summary = []
+        ts_root = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        for i, st in enumerate(steps, start=1):
+            try:
+                target = float(st.get("temperature"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            offset_hint = float(st.get("temp_controller_offset", 0.0) or 0.0)
+            voltage = st.get("voltage")
+            current = st.get("current")
+            name = st.get("step_name", f"step_{i}")
+            print(f"\n=== PROFILE STEP {i}: {name} | target={target}°C, offset_hint={offset_hint}°C ===")
+
+            # Apply PSU if available
+            if psu and voltage is not None:
+                try:
+                    psu.set_voltage(float(voltage))
+                    if current is not None:
+                        psu.set_current(float(current))
+                    psu.set_output_state(True)
+                    print(f"[DEBUG] PSU applied: {voltage} V, {current} A")
+                except (OSError, RuntimeError, ValueError) as e:
+                    print(f"[WARN] PSU apply failed: {e}")
+
+            # Set setpoint to target + hint
+            sp = float(target + offset_hint)
+            try:
+                ctrl.set_setpoint(chan, sp)
+            except (OSError, RuntimeError, ValueError) as e:
+                print(f"[ERROR] Failed to set setpoint: {e}")
+                continue
+
+            # Sample briefly
+            sample_s = max(10, int(args.profile_sample))
+            poll = max(0.5, float(args.profile_poll))
+            end = time.time() + sample_s
+            readings = []
+            print(f"[DEBUG] Sampling for {sample_s}s @ {poll}s intervals...")
+            while time.time() < end:
+                pv = probe.read_c()
+                if isinstance(pv, (int, float)):
+                    readings.append(float(pv))
+                time.sleep(poll)
+
+            if not readings:
+                print("[WARN] No probe readings collected; skipping step")
+                continue
+
+            avg = sum(readings) / len(readings)
+            offset = float(sp) - float(target)
+            err = float(target) - float(avg)
+            # Recommend new offset to correct error
+            new_offset = offset + err
+            print(f"[RESULT] {name}: avg_probe={avg:.2f}°C, target={target:.2f}°C, current_offset={offset:.2f}°C, recommended_offset={new_offset:.2f}°C")
+            offsets_summary.append({
+                "step_index": i,
+                "step_name": name,
+                "target_c": target,
+                "avg_probe_c": avg,
+                "current_offset_c": offset,
+                "recommended_offset_c": new_offset,
+                "voltage": voltage,
+                "current": current,
+            })
+
+        # Write summary JSON
+        out_json = os.path.join("logs", f"profile_offsets_{ts_root}.json")
+        os.makedirs(os.path.dirname(out_json), exist_ok=True)
+        # Aggregate by unique target temperature (rounded) for a concise offset table
+        agg: dict[str, list[float]] = {}
+        for row in offsets_summary:
+            key = str(int(round(row["target_c"])))
+            agg.setdefault(key, []).append(float(row["recommended_offset_c"]))
+        by_temp = {k: (sum(v) / len(v) if v else 0.0) for k, v in agg.items()}
+
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump({
+                "profile": args.profile,
+                "timestamp": dt.datetime.now().isoformat(),
+                "summary": offsets_summary,
+                "by_temperature": by_temp,
+            }, f, indent=2)
+        print(f"Saved profile offsets summary -> {out_json}")
+        return 0
 
     # Single-point mode
     if not targets_list:
@@ -435,10 +569,9 @@ def main():
             print(f"Saved offset JSON -> {args.save_json}")
         except (OSError, TypeError) as e:
             print(f"Warning: failed to save JSON: {e}")
-
-        exit_code = 0 if result.get("converged") else 1
-        print(f"[DEBUG] Exiting with code: {exit_code}")
-        return exit_code
+        ret_code = 0 if result.get("converged") else 1
+        print(f"[DEBUG] Exiting with code: {ret_code}")
+        return ret_code
 
     # Multi-point mode
     print("[DEBUG] Running multi-point calibration")
@@ -504,13 +637,13 @@ def main():
     all_ok = all(p.get("converged") for p in summary)
     print(f"[DEBUG] All points converged: {all_ok}")
     
-    exit_code = 0 if all_ok else 1
-    print(f"[DEBUG] Exiting with code: {exit_code}")
-    return exit_code
+    ret_code = 0 if all_ok else 1
+    print(f"[DEBUG] Exiting with code: {ret_code}")
+    return ret_code
 
 
 if __name__ == "__main__":
     print("[DEBUG] Script started")
-    exit_code = main()
-    print(f"[DEBUG] Script finished with exit code: {exit_code}")
-    sys.exit(exit_code)
+    code = main()
+    print(f"[DEBUG] Script finished with exit code: {code}")
+    sys.exit(code)
