@@ -1,0 +1,11 @@
+{
+  "channel": 1,
+  "tolerance_c": 1.0,
+  "stability_seconds": 60,
+  "poll_interval_seconds": 5,
+  "steps": [
+    { "temperature": -20, "dwell_seconds": 120, "label": "cold soak" },
+    { "temperature": 25,  "dwell_seconds": 60,  "label": "ambient" },
+    { "temperature": 70,  "dwell_seconds": 180, "label": "hot soak" }
+  ]
+}
