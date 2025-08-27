@@ -78,8 +78,16 @@ class LynxThermalCycleManager:
         self._pid_source = "avg"  # 'avg' | 'any' | 'controller'
         self._pid_deadband = 0.0
         self._pid = None
-
-    
+        # Upgrades
+        self._pid_interval_sec = 0.0
+        self._pid_last_update = None
+        self._pid_meas_ema = None
+        self._pid_filter_alpha = 0.0
+        self._pid_deriv_on_meas = False
+        self._pid_integral_band = None
+        self._pid_backcalc_k = 0.0
+        self._pid_sp_rate_limit = None
+        self._pid_last_sp_ts = None
 
     # --------- Internal helpers ---------
     def _apply_power_for_step(self, voltage: float, current: float):
@@ -145,24 +153,37 @@ class LynxThermalCycleManager:
 
     # --------- PID helpers ---------
     class SimplePID:
-        def __init__(self, kp: float, ki: float, kd: float, output_limits: Tuple[float, float] = (-10.0, 10.0)):
+        def __init__(self, kp: float, ki: float, kd: float,
+                     output_limits: Tuple[float, float] = (-10.0, 10.0),
+                     derivative_on_meas: bool = False,
+                     backcalc_k: float = 0.0,
+                     integral_band: Optional[float] = None):
             self.kp = float(kp)
             self.ki = float(ki)
             self.kd = float(kd)
             self.out_min, self.out_max = output_limits
             self.integral = 0.0
             self.prev_error: Optional[float] = None
+            self.prev_meas: Optional[float] = None
+            self.derivative_on_meas = bool(derivative_on_meas)
+            self.backcalc_k = float(backcalc_k)
+            self.integral_band = float(integral_band) if isinstance(integral_band, (int, float)) else None
 
         def reset(self):
             self.integral = 0.0
             self.prev_error = None
+            self.prev_meas = None
 
-        def compute(self, error: float, delta_t: float) -> float:
+        def compute(self, error: float, delta_t: float, meas: Optional[float] = None) -> float:
             delta_t = max(0.05, float(delta_t))
             # Proportional
             p = self.kp * error
             # Integral with simple anti-windup clamp
-            self.integral += error * delta_t
+            do_integrate = True
+            if self.integral_band is not None and abs(error) > self.integral_band:
+                do_integrate = False
+            if do_integrate:
+                self.integral += error * delta_t
             # Clamp integral reasonably so it doesn't run away
             max_int = 10.0 / (self.ki if self.ki != 0 else 1.0)
             if self.integral > max_int:
@@ -171,16 +192,25 @@ class LynxThermalCycleManager:
                 self.integral = -max_int
             i = self.ki * self.integral
             # Derivative (on error)
-            d_err = 0.0 if self.prev_error is None else (error - self.prev_error) / delta_t
-            d = self.kd * d_err
+            if self.derivative_on_meas and meas is not None and self.prev_meas is not None:
+                d_meas = (meas - self.prev_meas) / delta_t
+                d = -self.kd * d_meas  # negative sign for derivative on measurement
+            else:
+                d_err = 0.0 if self.prev_error is None else (error - self.prev_error) / delta_t
+                d = self.kd * d_err
             self.prev_error = error
+            if meas is not None:
+                self.prev_meas = meas
             u = p + i + d
-            # Clamp output
-            if u > self.out_max:
-                u = self.out_max
-            elif u < self.out_min:
-                u = self.out_min
-            return u
+            # Anti-windup back-calculation and clamp
+            u_clamped = max(self.out_min, min(self.out_max, u))
+            if self.backcalc_k > 0.0:
+                self.integral += self.backcalc_k * (u_clamped - u)
+                # Recompute with updated integral
+                i = self.ki * self.integral
+                u = p + i + d
+                u_clamped = max(self.out_min, min(self.out_max, u))
+            return u_clamped
 
     def _get_pid_measurement(self, target_c: float) -> Optional[float]:
         """Select a measurement for PID based on configured source.
@@ -189,11 +219,16 @@ class LynxThermalCycleManager:
         source = (self._pid_source or "avg").lower()
         tc1, tc2 = self._get_tc_snapshot()
         vals = [float(v) for v in (tc1, tc2) if isinstance(v, (int, float))]
-        if source in ("avg", "any") and vals:
+        if source in ("avg", "any", "min", "max") and vals:
             if source == "avg":
                 return sum(vals) / len(vals)
             # any: pick the one closest to target (most representative)
-            return min(vals, key=lambda v: abs(v - target_c))
+            if source == "any":
+                return min(vals, key=lambda v: abs(v - target_c))
+            if source == "min":
+                return min(vals)
+            if source == "max":
+                return max(vals)
         if source == "controller" or not vals:
             return self._read_actual_temp()
         return None
@@ -203,22 +238,43 @@ class LynxThermalCycleManager:
         Returns the setpoint used (or None if not updated)."""
         if not self._pid_enabled or self._pid is None or self._pid_base_setpoint is None:
             return None
+        # Apply interval gating for PID compute
+        now = time.time()
+        if isinstance(self._pid_interval_sec, (int, float)) and self._pid_interval_sec > 0:
+            if self._pid_last_update is not None and (now - self._pid_last_update) < float(self._pid_interval_sec):
+                return self._pid_sp_current
         meas = self._get_pid_measurement(target_c)
         if meas is None:
             return None
+        # Optional EMA filtering of measurement
+        if isinstance(self._pid_filter_alpha, (int, float)) and 0.0 < float(self._pid_filter_alpha) <= 1.0:
+            alpha = float(self._pid_filter_alpha)
+            self._pid_meas_ema = meas if self._pid_meas_ema is None else (alpha * meas + (1.0 - alpha) * self._pid_meas_ema)
+            meas_f = self._pid_meas_ema
+        else:
+            meas_f = meas
         # Deadband: reduce chattering
-        error = float(target_c) - float(meas)
+        error = float(target_c) - float(meas_f)
         if self._pid_deadband and abs(error) < self._pid_deadband:
             error = 0.0
-        now = time.time()
         delta_t = poll_s if self._pid_last_ts is None else (now - self._pid_last_ts)
         self._pid_last_ts = now
-        u = self._pid.compute(error, delta_t)
+        u = self._pid.compute(error, delta_t, meas=meas_f)
+        # Proposed setpoint
         new_sp = self._pid_base_setpoint + u
+        # Rate limit setpoint movement if requested
+        if isinstance(self._pid_sp_rate_limit, (int, float)) and self._pid_sp_rate_limit > 0 and self._pid_sp_current is not None and self._pid_last_sp_ts is not None:
+            dt_sp = max(0.05, now - self._pid_last_sp_ts)
+            max_delta = float(self._pid_sp_rate_limit) * dt_sp
+            delta_sp = new_sp - self._pid_sp_current
+            if abs(delta_sp) > max_delta:
+                new_sp = self._pid_sp_current + (max_delta if delta_sp > 0 else -max_delta)
         # Avoid spamming the controller if change is tiny
         if self._pid_sp_current is None or abs(new_sp - self._pid_sp_current) >= 0.05:
             self._set_setpoint(new_sp)
             self._pid_sp_current = new_sp
+            self._pid_last_sp_ts = now
+        self._pid_last_update = now
         return self._pid_sp_current
 
     def _wait_until_stable(self, target_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int):
@@ -518,18 +574,41 @@ class LynxThermalCycleManager:
                 max_off = float(getattr(step, "pid_max_offset", 15.0) or 15.0)
                 self._pid_source = str(getattr(step, "pid_source", "avg") or "avg")
                 self._pid_deadband = float(getattr(step, "pid_deadband", 0.0) or 0.0)
-                self._pid = LynxThermalCycleManager.SimplePID(kp, ki, kd, output_limits=(-abs(max_off), abs(max_off)))
+                # Upgraded options with sensible defaults
+                self._pid_interval_sec = float(getattr(step, "pid_interval", 1.0) or 1.0)
+                self._pid_filter_alpha = float(getattr(step, "pid_filter_alpha", 0.0) or 0.0)
+                self._pid_deriv_on_meas = bool(getattr(step, "pid_derivative_on_measurement", True))
+                self._pid_integral_band = float(getattr(step, "pid_integral_band", 0.8))
+                self._pid_backcalc_k = float(getattr(step, "pid_backcalc_k", 0.1))
+                self._pid_sp_rate_limit = float(getattr(step, "pid_sp_rate_limit", 1.0))
+                self._pid = LynxThermalCycleManager.SimplePID(
+                    kp, ki, kd,
+                    output_limits=(-abs(max_off), abs(max_off)),
+                    derivative_on_meas=self._pid_deriv_on_meas,
+                    backcalc_k=self._pid_backcalc_k,
+                    integral_band=self._pid_integral_band,
+                )
                 self._pid.reset()
                 self._pid_base_setpoint = setpoint_c
                 self._pid_sp_current = setpoint_c
                 self._pid_last_ts = None
-                log_message(f"PID enabled (kp={kp}, ki={ki}, kd={kd}, source={self._pid_source}, max_offset=±{max_off} C)")
+                self._pid_last_update = None
+                self._pid_meas_ema = None
+                self._pid_last_sp_ts = None
+                log_message(
+                    f"PID enabled (kp={kp}, ki={ki}, kd={kd}, source={self._pid_source}, max_offset=±{max_off} C, "
+                    f"interval={self._pid_interval_sec}s, filter_alpha={self._pid_filter_alpha}, deriv_on_meas={self._pid_deriv_on_meas}, "
+                    f"integral_band={self._pid_integral_band}, backcalc_k={self._pid_backcalc_k}, sp_rate_limit={self._pid_sp_rate_limit} C/s)"
+                )
             else:
                 # Clear any previous PID state
                 self._pid = None
                 self._pid_base_setpoint = None
                 self._pid_sp_current = None
                 self._pid_last_ts = None
+                self._pid_last_update = None
+                self._pid_meas_ema = None
+                self._pid_last_sp_ts = None
 
             # Handle by step type
             if cycle_type == "RAMP":
