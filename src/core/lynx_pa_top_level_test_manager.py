@@ -123,7 +123,7 @@ class PaTopLevelTestManager:
             from configs.configs import LynxPaConfig
 
             self.lynx_config = LynxPaConfig("LYNX_PA")
-            self.lynx_config.new_sno("TEST")
+            self.lynx_config.new_sno("TEST", "THERMAL")
 
             self.sig_a_test = BandwithPowerModuleTest(rfpm1=self.rfpm1, rfpm2=self.rfpm2, rfsa=self.rfsa, rfsg=self.rfsg, temp_probe=self.temp_probe, temp_probe2=self.temp_probe2, daq=self.daq, psu=self.power_supply, config=self.lynx_config, switch_bank=self.switch_bank)
 
@@ -135,11 +135,11 @@ class PaTopLevelTestManager:
 
             self.paths = [
                 "Band1_SN1",
-                "Band1_SN2",
-                "Band2_SN1",
-                "Band2_SN2",
-                "Band3_SN1",
-                "Band3_SN2"
+                # "Band1_SN2",
+                # "Band2_SN1",
+                # "Band2_SN2",
+                # "Band3_SN1",
+                # "Band3_SN2"
             ]
 
             self.scribe = Scribe("LYNX_PA")
@@ -600,7 +600,7 @@ class PaTopLevelTestManager:
             self.na_test.recover_test_state(bandpath=bandpath, switchpath=switchpath, gain_setting=gain_setting, statefile_path=statefile_path)
 
     def run_and_process_tests(self, path, sno, sig_a_tests=False, na_tests=True, golden_tests=False, options={}):
-        logger.info("TestManager start | path=%s | S/N=%s | flags={sig_a=%s, na=%s, golden=%s}", path, sno, sig_a_tests, na_tests, golden_tests)
+        logger.info("TestManager start | path=%s |  flags={sig_a=%s, na=%s, golden=%s}", path, sig_a_tests, na_tests, golden_tests)
         # initial snapshot to GUI
         self._emit_periodic_snapshot(phase="tests-start")
         if sig_a_tests:
@@ -795,8 +795,9 @@ class PaTopLevelTestManager:
         self.process_and_write_module_S_param(filepath=s22_results_filepath, bucket=gain, headers=True)
         self._emit_periodic_snapshot(phase="na-s22")
 
+        self.clean_up()
+
     def _run_sig_a_performance_tests(self, path):
-        logger.info("TestManager start | path=%s | S/N=%s | flags={sig_a=%s, na=%s, golden=%s}", path, sno, sig_a_tests, na_tests, golden_tests)
         # initial snapshot to GUI
         self._emit_periodic_snapshot(phase="tests-start")
 
@@ -884,6 +885,8 @@ class PaTopLevelTestManager:
             self.process_and_write_module_harmonic_tests(noise_bucket, wideband_results_filepath)
             self._emit_periodic_snapshot(phase="sig_a-noise")
 
+        self.clean_up()
+
     def _run_pin_pout_functional_tests(self, path):
         # initial snapshot to GUI
         self._emit_periodic_snapshot(phase="tests-start")
@@ -918,6 +921,8 @@ class PaTopLevelTestManager:
                     )
                     self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
                     self._emit_periodic_snapshot(phase="sig_a-power-meter")
+        
+        self.clean_up()
 
 if __name__ == "__main__":
     manager = PaTopLevelTestManager(sim=False)
@@ -932,8 +937,6 @@ if __name__ == "__main__":
                 "attenuation": 10,
                 "waveform": "CW"
             }
-        ]
-    }
         ]
     }
 
