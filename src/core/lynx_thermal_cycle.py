@@ -199,13 +199,38 @@ class LynxThermalCycleManager:
             log_message(f"Error reading temp_probe: {e}")
 
     def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int, temp_offset: float):
-        """Set the setpoint once, then wait until movement is within tolerance for a full window and within target band.
+        """Set the setpoint, then wait until movement is within tolerance for a full window and inside the target band.
 
-        No proportional or PID control is applied here.
+        If variance (window span) is low (<= 0.08C) but the temperature is stabilizing outside the target band,
+        a conservative PID nudge adjusts the setpoint toward the target until in-band stability is achieved.
         """
         # Apply setpoint once (target + offset)
         sp = float(target_c + (temp_offset or 0.0))
         self._set_setpoint(sp)
+
+        # Lightweight PID state for "stable in wrong place" correction
+        pid_enabled = True
+        pid_variance_threshold = 0.1  # C; when window span <= this and not in band, nudge setpoint
+        Kp, Ki, Kd = 0.6, 0.02, 0.0  # conservative gains; derivative disabled by default
+        integ = 0.0
+        last_err: Optional[float] = None
+        last_pid_ts: Optional[float] = None
+        min_pid_interval_s = max(5, int(poll_s))  # don't adjust more often than this
+        max_step_per_adjust_c = 1.0  # clamp single adjustment magnitude
+        max_sp_offset_c = 10.0  # clamp total deviation from (target + offset)
+        base_sp = float(sp)
+        def _apply_sp_nudge(new_sp: float):
+            nonlocal sp
+            sp = float(new_sp)
+            try:
+                if self.temp_controller is None:
+                    log_message(f"[SIM] PID: setpoint -> {sp:.2f} C")
+                else:
+                    # Fast apply without long wait to avoid blocking
+                    self.temp_controller.set_setpoint(self.temp_channel, sp)
+                    log_message(f"PID: setpoint -> {sp:.2f} C (CH{self.temp_channel})")
+            except (SerialException, ValueError, OSError) as e:
+                log_message(f"PID: failed to set setpoint: {e}")
 
         # Measurement function (prefer TC1; fallback to controller)
         def read_meas() -> Optional[float]:
@@ -258,11 +283,38 @@ class LynxThermalCycleManager:
             span = (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
             band_err = abs(float(meas) - float(target_c))
             in_band = band_err <= float(target_temp_delta_c)
+            # Rolling window coverage (how many seconds of data are in the current window)
+            coverage_s = (now - window_values[0][0]) if window_values else 0.0
 
             log_message(
-                f"SETTLE: n={len(vals)} span={span:.3f}C tol={float(tol_c):.3f}C band_err={band_err:.3f}C band=±{float(target_temp_delta_c):.2f}C in_band={in_band} window={window_duration}s"
+                f"SETTLE: n={len(vals)} span={span:.3f}C tol={float(tol_c):.3f}C band_err={band_err:.3f}C band=±{float(target_temp_delta_c):.2f}C in_band={in_band} window={window_duration}s cov={coverage_s:.1f}s"
             )
             self._maybe_log_telemetry(phase="settle", step=self.current_step, setpoint_c=sp)
+
+            # If we're stabilizing (low span) but outside the target band, apply a PID nudge
+            pid_window_ready = (coverage_s >= window_duration) and (len(vals) >= 3)
+            if pid_enabled and pid_window_ready and span <= pid_variance_threshold and not in_band:
+                err = float(target_c) - float(meas)  # positive if too cold; increase setpoint
+                # Rate limit PID adjustments
+                if last_pid_ts is None or (now - last_pid_ts) >= min_pid_interval_s:
+                    dt_s = (now - last_pid_ts) if last_pid_ts is not None else float(poll)
+                    # Integrator with clamping to avoid wind-up
+                    integ = max(-max_sp_offset_c, min(max_sp_offset_c, integ + err * dt_s))
+                    deriv = 0.0 if (Kd == 0 or last_err is None or dt_s <= 0) else (err - last_err) / dt_s
+                    output = Kp * err + Ki * integ + Kd * deriv
+                    # Clamp single-step adjustment
+                    output = max(-max_step_per_adjust_c, min(max_step_per_adjust_c, output))
+                    # Clamp total deviation from the base setpoint
+                    new_sp = base_sp + max(-max_sp_offset_c, min(max_sp_offset_c, (sp - base_sp) + output))
+                    # Apply nudge
+                    log_message(
+                        f"PID: stable outside band (span {span:.3f}C, err {err:.3f}C). Adjusting setpoint by {output:.3f}C to {new_sp:.2f}C"
+                    )
+                    _apply_sp_nudge(new_sp)
+                    last_pid_ts = now
+                    last_err = err
+                    # After changing setpoint, require a fresh full window of stability
+                    end_required = now + window_duration
 
             if span <= float(tol_c) and in_band:
                 if now >= end_required:
@@ -432,19 +484,19 @@ class LynxThermalCycleManager:
 
         return sig_a_perf, na_perf, pin_func
 
-    def _run_tests_for_step(self, step) -> tuple[bool, bool]:
+    def _run_tests_for_step(self, step) -> None:
         sig_a_perf, na_perf, pin_func = self._map_step_tests(step)
 
-        # Choose a representative path for now
-        paths = None
+        # Paths list (may be None or empty)
         try:
             paths = getattr(self.test_manager, "paths", None)
-        except (AttributeError, IndexError, TypeError):
-            path = None
+            if not isinstance(paths, (list, tuple)):
+                paths = []
+        except (AttributeError, TypeError):
+            paths = []
 
-        # Run tests regardless of instruments_connection flags
-        for path in paths:
-            # Pass explicit flags for logging
+        # Run tests via the public aggregator if available
+        for path in paths or [None]:
             self._log_telemetry(
                 phase="testing",
                 step=step,
@@ -453,18 +505,13 @@ class LynxThermalCycleManager:
                 na_performance=na_perf,
             )
             try:
-
-                if na_perf:
-                    self.test_manager._run_na_performance_tests(path)
-
-                if sig_a_perf:
-                    self.test_manager._run_sig_a_performance_tests(path)
-
-                if pin_func:
-                    self.test_manager._run_pin_pout_functional_tests(path)
-
-
-            except (RuntimeError, OSError, ValueError) as e:
+                runner = getattr(self.test_manager, "run_and_process_tests", None)
+                if callable(runner):
+                    # Pass explicit flags; concrete manager decides what to run
+                    runner(path=path, pin_pout_functional=pin_func, sig_a_performance=sig_a_perf, na_performance=na_perf)
+                else:
+                    log_message("No public test runner available; skipping tests for this step.")
+            except (RuntimeError, OSError, ValueError, TypeError) as e:
                 log_message(f"Tests failed to execute: {e}")
             finally:
                 self._log_telemetry(
