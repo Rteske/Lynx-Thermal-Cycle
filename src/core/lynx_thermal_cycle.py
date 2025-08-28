@@ -99,8 +99,8 @@ class LynxThermalCycleManager:
                 with open(self.telemetry_path, "w", encoding="utf-8") as f:
                     f.write(
                         "timestamp,step_index,step_name,cycle_type,phase,target_c,setpoint_c,actual_temp_c," \
-                        "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp,tests_sig_a_enabled,tests_na_enabled," \
-                        "tests_sig_a_executed,tests_na_executed\n"
+                        "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp," \
+                        "tests_pin_pout_functional,tests_sig_a_performance,tests_na_performance\n"
                     )
             log_message(f"Telemetry CSV -> {self.telemetry_path}")
         except OSError as e:
@@ -321,8 +321,9 @@ class LynxThermalCycleManager:
         return tc1_temp, tc2_temp
 
     def _log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
-                        sig_a_enabled: Optional[bool] = None, na_enabled: Optional[bool] = None,
-                        sig_a_executed: Optional[bool] = None, na_executed: Optional[bool] = None):
+                        pin_pout_functional: Optional[bool] = None,
+                        sig_a_performance: Optional[bool] = None,
+                        na_performance: Optional[bool] = None):
         if self.telemetry_path is None:
             return
         try:
@@ -357,10 +358,9 @@ class LynxThermalCycleManager:
                 str(bool(out)) if out is not None else "",
                 f"{tc1:.3f}" if isinstance(tc1, (int, float)) else "",
                 f"{tc2:.3f}" if isinstance(tc2, (int, float)) else "",
-                str(bool(sig_a_enabled)) if sig_a_enabled is not None else "",
-                str(bool(na_enabled)) if na_enabled is not None else "",
-                str(bool(sig_a_executed)) if sig_a_executed is not None else "",
-                str(bool(na_executed)) if na_executed is not None else "",
+                str(bool(pin_pout_functional)) if pin_pout_functional is not None else "",
+                str(bool(sig_a_performance)) if sig_a_performance is not None else "",
+                str(bool(na_performance)) if na_performance is not None else "",
             ]
             with open(self.telemetry_path, "a", encoding="utf-8") as f:
                 f.write(",".join(map(str, line)) + "\n")
@@ -382,10 +382,9 @@ class LynxThermalCycleManager:
                         "psu_output": bool(out) if out is not None else None,
                         "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
                         "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
-                        "tests_sig_a_enabled": bool(sig_a_enabled) if sig_a_enabled is not None else None,
-                        "tests_na_enabled": bool(na_enabled) if na_enabled is not None else None,
-                        "tests_sig_a_executed": bool(sig_a_executed) if sig_a_executed is not None else None,
-                        "tests_na_executed": bool(na_executed) if na_executed is not None else None,
+                        "tests_pin_pout_functional": bool(pin_pout_functional) if pin_pout_functional is not None else None,
+                        "tests_sig_a_performance": bool(sig_a_performance) if sig_a_performance is not None else None,
+                        "tests_na_performance": bool(na_performance) if na_performance is not None else None,
                     }
                     self.telemetry_callback(payload)
                 except (RuntimeError, ValueError, TypeError):
@@ -396,78 +395,85 @@ class LynxThermalCycleManager:
             pass
 
     def _maybe_log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
-                              sig_a_enabled: Optional[bool] = None, na_enabled: Optional[bool] = None,
-                              sig_a_executed: Optional[bool] = None, na_executed: Optional[bool] = None):
+                              pin_pout_functional: Optional[bool] = None,
+                              sig_a_performance: Optional[bool] = None,
+                              na_performance: Optional[bool] = None):
         now = time.time()
         if now - self._telemetry_last_ts >= 2.5:
             self._log_telemetry(phase=phase, step=step, setpoint_c=setpoint_c,
-                                sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
-                                sig_a_executed=sig_a_executed, na_executed=na_executed)
+                                pin_pout_functional=pin_pout_functional,
+                                sig_a_performance=sig_a_performance,
+                                na_performance=na_performance)
             self._telemetry_last_ts = now
 
     # --------- Tests integration ---------
-    def _map_step_tests(self, step) -> tuple[bool, bool]:
-        # SIG_A if any of these content flags are enabled
-        sig_a = any([
-            getattr(step, "psat_tests", False),
-            getattr(step, "gain_tests", False),
-            getattr(step, "phase_tests", False),
-            getattr(step, "IP3_tests", False),
-            getattr(step, "noise_figure_tests", False),
-            getattr(step, "pin_pout_tests", False),
-        ])
-        # NA category
-        na = any([
-            getattr(step, "na_tests", False),
-            getattr(step, "S11_tests", False),
-            getattr(step, "S22_tests", False),
-        ])
-        return sig_a, na
+    def _map_step_tests(self, step) -> tuple[bool, bool, bool]:
+        """Map profile flags to test families and golden mode.
+
+        Only the following flags are considered:
+        - pin_pout_functional (or pin_pout_functional_tests) golden tests
+        - sig_a_performance (or sig_a_performance_tests)
+        - na_performance (or na_performance_tests)
+
+        Returns (sig_a_enabled, na_enabled, golden_tests).
+        """
+        pin_func = bool(
+            getattr(step, "pin_pout_functional_tests", False)
+            or getattr(step, "pin_pout_functional", False)
+        )
+        sig_a_perf = bool(
+            getattr(step, "sig_a_performance_tests", False)
+            or getattr(step, "sig_a_performance", False)
+        )
+        na_perf = bool(
+            getattr(step, "na_performance_tests", False)
+            or getattr(step, "na_performance", False)
+        )
+
+        return sig_a_perf, na_perf, pin_func
 
     def _run_tests_for_step(self, step) -> tuple[bool, bool]:
-        sig_a_enabled, na_enabled = self._map_step_tests(step)
-        if not (sig_a_enabled or na_enabled):
-            return False, False
+        sig_a_perf, na_perf, pin_func = self._map_step_tests(step)
 
-        sig_a_exec = False
-        na_exec = False
         # Choose a representative path for now
+        paths = None
         try:
-            path = self.test_manager.paths[0]
-        except (AttributeError, IndexError):
+            paths = getattr(self.test_manager, "paths", None)
+        except (AttributeError, IndexError, TypeError):
             path = None
 
-        if path is None:
-            return False, False
-
-        # Respect instrument connectivity flags
-        if sig_a_enabled and not self.test_manager.instruments_connection.get("rfsa", True):
-            sig_a_enabled = False
-        if na_enabled and not self.test_manager.instruments_connection.get("na", True):
-            na_enabled = False
-
-        if not (sig_a_enabled or na_enabled):
-            return False, False
-
-        self._log_telemetry(phase="testing", step=step, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
-        try:
-            self.test_manager.run_and_process_tests(
-                path=path,
-                sno="",
-                sig_a_tests=sig_a_enabled,
-                na_tests=na_enabled,
-                golden_tests=False,
-                options={},
+        # Run tests regardless of instruments_connection flags
+        for path in paths:
+            # Pass explicit flags for logging
+            self._log_telemetry(
+                phase="testing",
+                step=step,
+                pin_pout_functional=pin_func,
+                sig_a_performance=sig_a_perf,
+                na_performance=na_perf,
             )
-            sig_a_exec = sig_a_enabled
-            na_exec = na_enabled
-        except (RuntimeError, OSError, ValueError) as e:
-            log_message(f"Tests failed to execute: {e}")
-        finally:
-            self._log_telemetry(phase="testing", step=step, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
-                                sig_a_executed=sig_a_exec, na_executed=na_exec)
+            try:
 
-        return sig_a_exec, na_exec
+                if na_perf:
+                    self.test_manager._run_na_performance_tests(path)
+
+                if sig_a_perf:
+                    self.test_manager._run_sig_a_performance_tests(path)
+
+                if pin_func:
+                    self.test_manager._run_pin_pout_functional_tests(path)
+
+
+            except (RuntimeError, OSError, ValueError) as e:
+                log_message(f"Tests failed to execute: {e}")
+            finally:
+                self._log_telemetry(
+                    phase="testing",
+                    step=step,
+                    pin_pout_functional=pin_func,
+                    sig_a_performance=sig_a_perf,
+                    na_performance=na_perf,
+                )
 
     def run_thermal_cycle(self, profile_path):
         """Execute the temperature steps defined in a profile JSON file."""
@@ -498,10 +504,16 @@ class LynxThermalCycleManager:
             log_message(f"Step {idx}/{len(all_steps)} | {getattr(step, 'step_name', 'Unnamed')} | {cycle_type}")
             log_message(f"Target {target_c:.2f} C (setpoint {setpoint_c:.2f} C, tol ±{tol_c:.2f} C)")
 
-            sig_a_enabled, na_enabled = self._map_step_tests(step)
-            # Prime an initial telemetry line at step start
-            self._log_telemetry(phase="start", step=step, setpoint_c=setpoint_c,
-                                sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+            sig_a_perf, na_perf, pin_func = self._map_step_tests(step)
+
+            self._log_telemetry(
+                phase="start",
+                step=step,
+                setpoint_c=setpoint_c,
+                sig_a_performance=sig_a_perf,
+                na_performance=na_perf,
+                pin_pout_functional=pin_func
+            )
 
             # Apply PSU state per step
             self._apply_power_for_step(getattr(step, "voltage", 0.0) or 0.0, getattr(step, "current", 0.0) or 0.0)
@@ -534,7 +546,14 @@ class LynxThermalCycleManager:
                                 log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
                             else:
                                 consecutive = 0
-                        self._maybe_log_telemetry(phase="ramp", step=step, setpoint_c=setpoint_c, sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+                        self._maybe_log_telemetry(
+                            phase="ramp",
+                            step=step,
+                            setpoint_c=setpoint_c,
+                            pin_pout_functional=pin_func,
+                            sig_a_performance=sig_a_perf,
+                            na_performance=na_perf,
+                        )
                         time.sleep(max(1, int(poll_s)))
                 log_message("RAMP: target band reached via thermocouples")
             elif cycle_type in ("DWELL", "SOAK"):
@@ -542,25 +561,34 @@ class LynxThermalCycleManager:
                 self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=offset_c)
 
                 # Run tests (if any) once stable
-                sig_a_exec = na_exec = False
-                if sig_a_enabled or na_enabled:
-                    sig_a_exec, na_exec = self._run_tests_for_step(step)
+                self._run_tests_for_step(step)
 
                 if dwell_s > 0:
                     log_message(f"Dwelling at target for {dwell_s}s")
                     end = time.time() + dwell_s
                     while time.time() < end:
                         # sp = self._control_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
-                        self._maybe_log_telemetry(phase="dwell", step=step, setpoint_c=setpoint_c,
-                                                  sig_a_enabled=sig_a_enabled, na_enabled=na_enabled,
-                                                  sig_a_executed=sig_a_exec, na_executed=na_exec)
+                        self._maybe_log_telemetry(
+                            phase="dwell",
+                            step=step,
+                            setpoint_c=setpoint_c,
+                            pin_pout_functional=pin_func,
+                            sig_a_performance=sig_a_perf,
+                            na_performance=na_perf,
+                        )
 
             # Optional: turn off power after this step
             if getattr(step, "power_off_after", False):
                 self._power_off()
 
-            self._log_telemetry(phase="step_complete", step=step, setpoint_c=0,
-                                sig_a_enabled=sig_a_enabled, na_enabled=na_enabled)
+            self._log_telemetry(
+                phase="step_complete",
+                step=step,
+                setpoint_c=0,
+                pin_pout_functional=pin_func,
+                sig_a_performance=sig_a_perf,
+                na_performance=na_perf,
+            )
 
 
         log_message("Thermal cycle complete")

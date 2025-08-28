@@ -123,6 +123,7 @@ class PaTopLevelTestManager:
             from configs.configs import LynxPaConfig
 
             self.lynx_config = LynxPaConfig("LYNX_PA")
+            self.lynx_config.new_sno("TEST")
 
             self.sig_a_test = BandwithPowerModuleTest(rfpm1=self.rfpm1, rfpm2=self.rfpm2, rfsa=self.rfsa, rfsg=self.rfsg, temp_probe=self.temp_probe, temp_probe2=self.temp_probe2, daq=self.daq, psu=self.power_supply, config=self.lynx_config, switch_bank=self.switch_bank)
 
@@ -249,10 +250,6 @@ class PaTopLevelTestManager:
             "psu_output": bool(out) if out is not None else None,
             "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
             "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
-            "tests_sig_a_enabled": None,
-            "tests_na_enabled": None,
-            "tests_sig_a_executed": None,
-            "tests_na_executed": None,
         }
         self._emit_telemetry(payload)
 
@@ -566,6 +563,7 @@ class PaTopLevelTestManager:
         logger.info("Cleanup: disabling RF, stopping RFSG, resetting switches")
         try:
             if getattr(self, "daq", None) is not None:
+                self.daq.set_band("NONE")
                 self.daq.disable_rf()
         except Exception:
             pass
@@ -754,14 +752,188 @@ class PaTopLevelTestManager:
         self._emit_periodic_snapshot(phase="tests-end")
         self.clean_up()
 
+    def _run_na_performance_tests(self, path):
+        # 31 Steps of attenuation
+        logger.info("NA tests: starting")
+        s21_gain_results_filepath = self.lynx_config.paths[path]["S21"]["gain_results_filepath"]
+        s21_phase_results_filepath = self.lynx_config.paths[path]["S21"]["phase_results_filepath"]
+        s21_statefilepath = self.lynx_config.paths[path]["S21"]["state_filepath"]
+        s21_switchpath = self.lynx_config.paths[path]["S21"]["switchpath"]
+
+        attenuation_settings = range(0, 32, 1)
+
+        self.switch_bank.set_all_switches(s21_switchpath)
+        bandpath = self.lynx_config.get_bandpath_by_path(path)
+        for attenuation_setting in attenuation_settings:
+            self._emit_periodic_snapshot(phase="na-setup")
+
+            gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S21", format="MLOG", statefilepath=s21_statefilepath)
+            phase = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S21", format="PHASE", statefilepath=s21_statefilepath)
+
+            if attenuation_setting == 0:
+                headers = True
+            else:
+                headers = False
+
+            self.process_and_write_module_S_param(filepath=s21_gain_results_filepath, bucket=gain, headers=headers)
+            self.process_and_write_module_S_param(filepath=s21_phase_results_filepath, bucket=phase, headers=headers)
+            self._emit_periodic_snapshot(phase="na-s21")
+
+        s11_state_filepath = self.lynx_config.paths[path]["S11"]["state_filepath"]
+        s11_results_filepath = self.lynx_config.paths[path]["S11"]["results_filepath"]
+        s11_switchpath = self.lynx_config.paths[path]["S11"]["switchpath"]
+        self.switch_bank.set_all_switches(s11_switchpath)
+        gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S11", format="MLOG", statefilepath=s11_state_filepath)
+        self.process_and_write_module_S_param(filepath=s11_results_filepath, bucket=gain, headers=True)
+        self._emit_periodic_snapshot(phase="na-s11")
+
+        s22_state_filepath = self.lynx_config.paths[path]["S22"]["state_filepath"]
+        s22_results_filepath = self.lynx_config.paths[path]["S22"]["results_filepath"]
+        s22_switchpath = self.lynx_config.paths[path]["S22"]["switchpath"]
+        self.switch_bank.set_all_switches(s22_switchpath)
+        gain = self.na_test.get_ratioed_power_measurement(bandpath=bandpath, gain_setting=attenuation_setting, ratioed_power="S22", format="MLOG", statefilepath=s22_state_filepath)
+        self.process_and_write_module_S_param(filepath=s22_results_filepath, bucket=gain, headers=True)
+        self._emit_periodic_snapshot(phase="na-s22")
+
+    def _run_sig_a_performance_tests(self, path):
+        logger.info("TestManager start | path=%s | S/N=%s | flags={sig_a=%s, na=%s, golden=%s}", path, sno, sig_a_tests, na_tests, golden_tests)
+        # initial snapshot to GUI
+        self._emit_periodic_snapshot(phase="tests-start")
+
+        logger.info("SIG_A tests: starting")
+        switchpath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["switchpath"]
+        freqs = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["freqs"]
+        attenuation_settings = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["attenuation_settings"]
+        bandwidths = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["bandwidths"]
+        waveforms = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["waveforms"]
+        harmonic_start_stop = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["harmonic_start_stop"]
+        wideband_start_stop = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["wideband_start_stop"]
+        harmonic_results_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["harmonic_results_filepath"]
+        standard_results_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["standard_results_filepath"]
+        power_meter_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["power_meter_filepath"]
+        wideband_results_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["wideband_results_filepath"]
+
+        self.switch_bank.set_all_switches(switchpath)
+
+        for frequency in freqs:
+            self._emit_periodic_snapshot(phase="sig_a-setup")
+            output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
+            input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
+            bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
+            rfsg_input_power = self.sig_a_test.input_power_validation(frequency, target_power=-10, start_power=-20, input_loss=input_loss)
+
+            self.rfsg.set_frequency(frequency=frequency)
+            self.rfsg.set_amplitude(rfsg_input_power)
+            self._emit_periodic_snapshot(phase="sig_a-running")
+
+            for attenuation_setting in attenuation_settings:
+                for bandwidth in bandwidths:
+                    waveform = "OQPSK"
+                    standard_bucket = self.sig_a_test.get_standard_bandwidth_by_frequency(
+                        bandpath=bandpath,
+                        frequency=frequency,
+                        bandwidth=bandwidth,
+                        gain_setting=attenuation_setting,
+                        waveform=waveform
+                    )
+
+                    self.process_and_write_module_standard_bandwidth_tests(standard_bucket, standard_results_filepath)
+                    self._emit_periodic_snapshot(phase="sig_a-standard")
+
+                for waveform in waveforms:
+
+                    if frequency in [1.95E+9, 3E+9, 4E+9, 10E+9, 12.5E+9, 15E+9]:
+                        harmonic_bucket = self.sig_a_test.get_harmonics_by_frequency_and_switchpath(
+                            bandpath=bandpath,
+                            frequency=frequency,
+                            harmonic_start_stop=harmonic_start_stop,
+                            waveform=waveform,
+                            gain_setting=attenuation_setting,
+                        )
+                        self.process_and_write_module_harmonic_tests(harmonic_bucket, harmonic_results_filepath)
+                        self._emit_periodic_snapshot(phase="sig_a-harmonic")
+
+                    wideband_bucket = self.sig_a_test.get_harmonics_by_frequency_and_switchpath(
+                        bandpath=bandpath,
+                        frequency=frequency,
+                        harmonic_start_stop=wideband_start_stop,
+                        waveform=waveform,
+                        gain_setting=attenuation_setting
+                    )
+                    self.process_and_write_module_harmonic_tests(wideband_bucket, wideband_results_filepath)
+                    self._emit_periodic_snapshot(phase="sig_a-wideband")
+
+                    power_meter_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
+                        bandpath=bandpath,
+                        frequency=frequency,
+                        waveform=waveform,
+                        gain_setting=attenuation_setting,
+                        output_loss=output_loss,
+                    )
+                    self.process_and_write_module_power_meter_tests(power_meter_bucket, power_meter_filepath)
+                    self._emit_periodic_snapshot(phase="sig_a-power-meter")
+
+            self.rfsg.stop()
+            noise_bucket = self.sig_a_test.get_harmonics_by_frequency_and_switchpath(
+                bandpath=bandpath,
+                frequency=frequency,
+                harmonic_start_stop=wideband_start_stop,
+                waveform="CW",
+                gain_setting=attenuation_setting,
+            )
+            self.process_and_write_module_harmonic_tests(noise_bucket, wideband_results_filepath)
+            self._emit_periodic_snapshot(phase="sig_a-noise")
+
+    def _run_pin_pout_functional_tests(self, path):
+        # initial snapshot to GUI
+        self._emit_periodic_snapshot(phase="tests-start")
+
+        logger.info("SIG_A tests: starting")
+        switchpath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["switchpath"]
+        freqs = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["freqs"]
+        attenuation_settings = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["attenuation_settings"]
+        waveforms = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["waveforms"]
+        power_meter_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["power_meter_filepath"]
+
+        self.switch_bank.set_all_switches(switchpath)
+        for frequency in freqs:
+            self._emit_periodic_snapshot(phase="sig_a-setup")
+            output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
+            input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
+            bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
+            rfsg_input_power = self.sig_a_test.input_power_validation(frequency, target_power=-10, start_power=-20, input_loss=input_loss)
+
+            self.rfsg.set_frequency(frequency=frequency)
+            self.rfsg.set_amplitude(rfsg_input_power)
+            self._emit_periodic_snapshot(phase="sig_a-running")
+
+            for attenuation_setting in attenuation_settings:
+                for waveform in waveforms:
+                    golden_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
+                        bandpath=bandpath,
+                        frequency=frequency,
+                        waveform=waveform,
+                        gain_setting=attenuation_setting,
+                        output_loss=output_loss
+                    )
+                    self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
+                    self._emit_periodic_snapshot(phase="sig_a-power-meter")
+
 if __name__ == "__main__":
     manager = PaTopLevelTestManager(sim=False)
 
     profile = {
         "steps": [
             {
-                "name"
+                "name": "Step 1",
+                "type": "sig_a",
+                "frequency": 1e9,
+                "bandwidth": 100e6,
+                "attenuation": 10,
+                "waveform": "CW"
             }
+        ]
+    }
         ]
     }
 
