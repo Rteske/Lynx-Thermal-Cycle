@@ -33,7 +33,7 @@ current = power_supply.get_current()
 print(f"Voltage: {voltage} V")
 print(f"Current: {current} A")
 
-temp_controller.set_temp(25)
+temp_controller.set_setpoint(1, 25)
 temp_controller.set_chamber_state(False)
 chamber_state = temp_controller.query_chamber_state()
 temp = temp_controller.query_actual(1)
