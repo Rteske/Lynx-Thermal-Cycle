@@ -210,8 +210,8 @@ class LynxThermalCycleManager:
 
         # Lightweight PID state for "stable in wrong place" correction
         pid_enabled = True
-        pid_variance_threshold = 0.1  # C; when window span <= this and not in band, nudge setpoint
-        Kp, Ki, Kd = 0.6, 0.02, 0.0  # conservative gains; derivative disabled by default
+        pid_variance_threshold = 0.3  # C; when window span <= this and not in band, nudge setpoint
+        Kp, Ki, Kd = 0.2, 0.02, 0.0  # conservative gains; derivative disabled by default
         integ = 0.0
         last_err: Optional[float] = None
         last_pid_ts: Optional[float] = None
@@ -291,9 +291,7 @@ class LynxThermalCycleManager:
             )
             self._maybe_log_telemetry(phase="settle", step=self.current_step, setpoint_c=sp)
 
-            # If we're stabilizing (low span) but outside the target band, apply a PID nudge
-            pid_window_ready = (coverage_s >= window_duration) and (len(vals) >= 3)
-            if pid_enabled and pid_window_ready and span <= pid_variance_threshold and not in_band:
+            if pid_enabled and span <= pid_variance_threshold and not in_band:
                 err = float(target_c) - float(meas)  # positive if too cold; increase setpoint
                 # Rate limit PID adjustments
                 if last_pid_ts is None or (now - last_pid_ts) >= min_pid_interval_s:
@@ -505,12 +503,15 @@ class LynxThermalCycleManager:
                 na_performance=na_perf,
             )
             try:
-                runner = getattr(self.test_manager, "run_and_process_tests", None)
-                if callable(runner):
-                    # Pass explicit flags; concrete manager decides what to run
-                    runner(path=path, pin_pout_functional=pin_func, sig_a_performance=sig_a_perf, na_performance=na_perf)
-                else:
-                    log_message("No public test runner available; skipping tests for this step.")
+                if pin_func:
+                    self.test_manager._run_pin_pout_functional_tests(path=path)
+
+                if sig_a_perf:
+                    self.test_manager._run_sig_a_performance_tests(path=path)
+
+                if na_perf:
+                    self.test_manager._run_na_performance_tests(path=path)
+
             except (RuntimeError, OSError, ValueError, TypeError) as e:
                 log_message(f"Tests failed to execute: {e}")
             finally:
@@ -572,36 +573,16 @@ class LynxThermalCycleManager:
                 # For ramps, wait until we're within target +/- target_temp_delta or for configured dwell time
                 target_delta = float(getattr(step, "target_temp_delta", tol_c) or tol_c)
                 log_message(f"RAMP: waiting for thermocouples within ±{target_delta} C of target")
-                # Use a shorter window for ramp approach: hold within band for 2 consecutive polls
-                consecutive_needed = 2
-                if self.simulation_mode:
-                    log_message("RAMP: SIM mode — treating band reached immediately")
-                else:
-                    consecutive = 0
-                    while consecutive < consecutive_needed:
-                        _, count_present, vals = self._tcs_within_band(target_c, target_delta)
-                        if count_present > 0:
-                            any_ok = any(abs(v - target_c) <= target_delta for v in vals)
-                            consecutive = consecutive + 1 if any_ok else 0
-                            msg_vals = ", ".join(f"{v:.2f}" for v in vals)
-                            log_message(f"RAMP TC check [{msg_vals}] vs {target_c:.2f} ±{target_delta:.2f} -> {'OK' if any_ok else 'OUT'} (any) ({consecutive}/{consecutive_needed})")
-                        else:
-                            # Fallback to controller if no TCs available
-                            curr = self._read_actual_temp()
-                            if curr is not None and abs(curr - target_c) <= target_delta:
-                                consecutive += 1
-                                log_message(f"RAMP controller {curr:.2f} within band ({consecutive}/{consecutive_needed})")
-                            else:
-                                consecutive = 0
-                        self._maybe_log_telemetry(
-                            phase="ramp",
-                            step=step,
-                            setpoint_c=setpoint_c,
-                            pin_pout_functional=pin_func,
-                            sig_a_performance=sig_a_perf,
-                            na_performance=na_perf,
-                        )
-                        time.sleep(max(1, int(poll_s)))
+                self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_delta, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=offset_c)
+                self._maybe_log_telemetry(
+                    phase="ramp",
+                    step=step,
+                    setpoint_c=setpoint_c,
+                    pin_pout_functional=pin_func,
+                    sig_a_performance=sig_a_perf,
+                    na_performance=na_perf,
+                )
+                time.sleep(max(1, int(poll_s)))
                 log_message("RAMP: target band reached via thermocouples")
             elif cycle_type in ("DWELL", "SOAK"):
                 # Wait to be stable within tolerance window, then dwell for the specified time
