@@ -10,9 +10,9 @@ class TempController:
         if value > 85:
             print("Value too high, setting to 85")
             value = 85
-        elif value < -45:
+        elif value < -50:
             print("Value too low, setting to -45")
-            value = -45
+            value = -50
 
         cmd = f"= SP{channel} {value}"
         self.connector.write_cmd(cmd)
