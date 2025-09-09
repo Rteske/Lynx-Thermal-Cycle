@@ -66,8 +66,14 @@ class LynxThermalCycleManager:
             # Lazy import to avoid pyvisa/serial requirements in simulation
             from src.core.lynx_pa_top_level_test_manager import PaTopLevelTestManager  # type: ignore
             self.test_manager = PaTopLevelTestManager(sim=False)
+
         self.temp_profile_manager = None
-        self.telemetry_callback = None  # set via set_telemetry_callback
+        # Public/user callback (GUI etc.). We keep this separate from the wrapper we forward to the test manager
+        self._user_telemetry_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.telemetry_callback = None  # Back-compat alias; will mirror user callback
+
+        # Attach CSV+GUI composite telemetry callback to the test manager.
+        self._attach_test_manager_csv_callback()
 
         # Initialize temperature controller and turn chamber ON
         try:
@@ -75,11 +81,10 @@ class LynxThermalCycleManager:
                 # Lazy import to avoid requiring pyserial in simulation mode
                 from instruments.temp_controller import TempController  # type: ignore
                 self.temp_controller = TempController()
-                self.temp_controller.set_chamber_state(True)
                 self.temp_channel = 1
             else:
                 # Use simulated temperature controller
-                self.temp_controller = None  # Will be replaced with simulated version
+                self.temp_controller = None
                 self.temp_channel = 1
                 print("Using simulated temperature controller")
             log_message("TempController initialized and chamber turned ON")
@@ -89,6 +94,8 @@ class LynxThermalCycleManager:
             self.temp_channel = 1
             log_message(f"TempController not available: {e}")
 
+        # Provide temp controller reference to the top-level test manager so it can enrich telemetry safely
+        self.test_manager.set_temp_controller(self.temp_controller, self.temp_channel)
         # Telemetry CSV setup
         try:
             logs_dir = os.path.join(os.getcwd(), "logs")
@@ -100,7 +107,7 @@ class LynxThermalCycleManager:
                     f.write(
                         "timestamp,step_index,step_name,cycle_type,phase,target_c,setpoint_c,actual_temp_c," \
                         "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp," \
-                        "tests_pin_pout_functional,tests_sig_a_performance,tests_na_performance\n"
+                        "tests_pin_pout_functional,tests_sig_a_performance,tests_na_performance,rf_on_off,fault_status,bandpath,gain_value,date_string,temp_value\n"
                     )
             log_message(f"Telemetry CSV -> {self.telemetry_path}")
         except OSError as e:
@@ -146,6 +153,8 @@ class LynxThermalCycleManager:
             self.temp_controller.set_setpoint(self.temp_channel, setpoint_c)
             log_message(f"Chamber setpoint -> {setpoint_c:.2f} C (CH{self.temp_channel})")
             # Wait until the temp_controller actual temperature of the plate finishes updating
+            self.temp_controller.set_chamber_state(True)
+
             timeout = 30  # seconds
             start_time = time.time()
             while True:
@@ -164,14 +173,10 @@ class LynxThermalCycleManager:
         if self.temp_controller is None:
             return None
         try:
+            self.temp_controller.connector.read_to_clear()
             raw = self.temp_controller.query_actual(self.temp_channel)
-            # raw may be bytes like b' +25.3' or similar; try to extract a float
-            if isinstance(raw, (bytes, bytearray)):
-                text = raw.decode(errors="ignore")
-            else:
-                text = str(raw)
-            m = re.search(r"[-+]?\d+(?:\.\d+)?", text)
-            return float(m.group(0)) if m else None
+            # raw may be bytes like b' +25.3' or similar; try to extract a floa
+            return float(raw)
         except (SerialException, ValueError, OSError):
             return None
 
@@ -210,8 +215,8 @@ class LynxThermalCycleManager:
 
         # Lightweight PID state for "stable in wrong place" correction
         pid_enabled = True
-        pid_variance_threshold = 0.3  # C; when window span <= this and not in band, nudge setpoint
-        Kp, Ki, Kd = 0.2, 0.02, 0.0  # conservative gains; derivative disabled by default
+        pid_variance_threshold = 0.15  # C; when window span <= this and not in band, nudge setpoint
+        Kp, Ki, Kd = 0.1, 0.02, 0.0  # conservative gains; derivative disabled by default
         integ = 0.0
         last_err: Optional[float] = None
         last_pid_ts: Optional[float] = None
@@ -328,9 +333,232 @@ class LynxThermalCycleManager:
         # No-op (telemetry initialized in __init__)
         return
 
+    def get_live_snapshot(self) -> Dict[str, Any]:
+        """Return a best-effort live snapshot of key telemetry values.
+
+        Includes: setpoint_c, actual_temp_c, psu_voltage, psu_current, psu_output,
+        tc1_temp, tc2_temp, and DAQ fields (rf_on_off, fault_status, bandpath,
+        gain_value, date_string, temp_value). Missing values are returned as None.
+        """
+        snapshot: Dict[str, Any] = {}
+        # Temp controller setpoint and actual
+        try:
+            sp = None
+            if getattr(self, "temp_controller", None) is not None:
+                try:
+                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                except Exception:
+                    sp = None
+            snapshot["setpoint_c"] = sp
+        except Exception:
+            snapshot["setpoint_c"] = None
+
+        try:
+            snapshot["actual_temp_c"] = self._read_actual_temp()
+        except Exception:
+            snapshot["actual_temp_c"] = None
+
+        # PSU
+        try:
+            v, c, out = self._get_psu_snapshot()
+            snapshot["psu_voltage"] = v if isinstance(v, (int, float)) else None
+            snapshot["psu_current"] = c if isinstance(c, (int, float)) else None
+            snapshot["psu_output"] = bool(out) if out is not None else None
+        except Exception:
+            snapshot["psu_voltage"] = None
+            snapshot["psu_current"] = None
+            snapshot["psu_output"] = None
+
+        # Thermocouples
+        try:
+            tc1, tc2 = self._get_tc_snapshot()
+            snapshot["tc1_temp"] = float(tc1) if isinstance(tc1, (int, float)) else None
+            snapshot["tc2_temp"] = float(tc2) if isinstance(tc2, (int, float)) else None
+        except Exception:
+            snapshot["tc1_temp"] = None
+            snapshot["tc2_temp"] = None
+
+        # DAQ fields
+        try:
+            daq = self._get_daq_snapshot()
+            if isinstance(daq, dict):
+                for k in ("rf_on_off", "fault_status", "bandpath", "gain_value", "date_string", "temp_value"):
+                    snapshot[k] = daq.get(k)
+            else:
+                for k in ("rf_on_off", "fault_status", "bandpath", "gain_value", "date_string", "temp_value"):
+                    snapshot[k] = None
+        except Exception:
+            for k in ("rf_on_off", "fault_status", "bandpath", "gain_value", "date_string", "temp_value"):
+                snapshot[k] = None
+
+        return snapshot
+
     def set_telemetry_callback(self, callback: Optional[Callable[[Dict[str, Any]], None]]):
         """Register a callback that receives a dict of telemetry values whenever we log a row."""
+        # Store user callback and mirror legacy attribute
+        self._user_telemetry_callback = callback
         self.telemetry_callback = callback
+
+        # Define a wrapper: write to CSV, then invoke user callback.
+        def _csv_proxy(payload: Dict[str, Any]):
+            try:
+                self._log_external_telemetry(payload)
+            except Exception:
+                # Never let CSV issues kill the callback chain
+                pass
+            # Finally, pass through to the user callback if present
+            try:
+                if self._user_telemetry_callback is not None:
+                    self._user_telemetry_callback(payload)
+            except Exception:
+                pass
+
+        # Also forward to the underlying test manager
+        try:
+            tm_cb_setter = getattr(self.test_manager, "set_telemetry_callback", None)
+            tm_sink_setter = getattr(self.test_manager, "set_external_telemetry_sink", None)
+            if callable(tm_cb_setter):
+                tm_cb_setter(_csv_proxy)
+            if callable(tm_sink_setter):
+                tm_sink_setter(_csv_proxy)
+        except Exception:
+            pass
+
+    def _attach_test_manager_csv_callback(self) -> None:
+        """Ensure the test manager has a callback that logs to CSV and optionally to the user GUI."""
+        try:
+            tm_cb_setter = getattr(self.test_manager, "set_telemetry_callback", None)
+            tm_sink_setter = getattr(self.test_manager, "set_external_telemetry_sink", None)
+            if not callable(tm_cb_setter):
+                return
+            def _composite(payload: Dict[str, Any]):
+                try:
+                    self._log_external_telemetry(payload)
+                except Exception:
+                    pass
+                try:
+                    if self._user_telemetry_callback is not None:
+                        self._user_telemetry_callback(payload)
+                except Exception:
+                    pass
+            tm_cb_setter(_composite)
+            # Also wire as an external sink if supported, providing redundancy
+            if callable(tm_sink_setter):
+                try:
+                    tm_sink_setter(_composite)
+                except Exception:
+                    pass
+        except Exception:
+            # Keep silent; tests must not break on telemetry issues
+            pass
+
+    def _log_external_telemetry(self, payload: Dict[str, Any]):
+        """Append a telemetry line from external sources (e.g., test manager) into the same CSV schema.
+
+        The payload may include some of: timestamp, step_index, step_name, cycle_type, phase,
+        target_c, setpoint_c, actual_temp_c, psu_voltage, psu_current, psu_output,
+        tc1_temp, tc2_temp, rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value.
+        Missing fields are left blank in the CSV.
+        """
+        if self.telemetry_path is None:
+            return
+        try:
+            # Prefer current step context when present
+            idx = payload.get("step_index")
+            if idx is None and self.current_step is not None:
+                idx = getattr(self.current_step, "_index", None)
+            name = payload.get("step_name")
+            if not name and self.current_step is not None:
+                name = getattr(self.current_step, "step_name", "")
+            cycle = payload.get("cycle_type")
+            if not cycle and self.current_step is not None:
+                cycle = getattr(self.current_step, "temp_cycle_type", "")
+            phase = payload.get("phase", "")
+
+            target = payload.get("target_c", None)
+            if target is None and self.current_step is not None:
+                target = getattr(self.current_step, "temperature", None)
+
+            sp = payload.get("setpoint_c")
+            if sp is None and self.temp_controller is not None:
+                try:
+                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                except Exception:
+                    sp = None
+
+            actual = payload.get("actual_temp_c")
+            if actual is None:
+                actual = self._read_actual_temp()
+
+            # PSU/TC snapshots from payload with fallback to live reads
+            v = payload.get("psu_voltage")
+            c = payload.get("psu_current")
+            out = payload.get("psu_output")
+            if v is None or c is None or out is None:
+                pv, pc, pout = self._get_psu_snapshot()
+                v = v if isinstance(v, (int, float)) else pv
+                c = c if isinstance(c, (int, float)) else pc
+                out = out if isinstance(out, bool) else pout
+
+            tc1 = payload.get("tc1_temp")
+            tc2 = payload.get("tc2_temp")
+            if tc1 is None or tc2 is None:
+                _tc1, _tc2 = self._get_tc_snapshot()
+                tc1 = tc1 if isinstance(tc1, (int, float)) else _tc1
+                tc2 = tc2 if isinstance(tc2, (int, float)) else _tc2
+
+            # DAQ: prefer payload, otherwise live
+            rf_on_off = payload.get("rf_on_off")
+            fault_status = payload.get("fault_status")
+            bandpath = payload.get("bandpath")
+            gain_value = payload.get("gain_value")
+            date_string = payload.get("date_string")
+            temp_value = payload.get("temp_value")
+            if any(x is None for x in (rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value)):
+                daq_snapshot = self._get_daq_snapshot()
+                if isinstance(daq_snapshot, dict):
+                    rf_on_off = rf_on_off if rf_on_off is not None else daq_snapshot.get("rf_on_off")
+                    fault_status = fault_status if fault_status is not None else daq_snapshot.get("fault_status")
+                    bandpath = bandpath if bandpath is not None else daq_snapshot.get("bandpath")
+                    gain_value = gain_value if gain_value is not None else daq_snapshot.get("gain_value")
+                    date_string = date_string if date_string is not None else daq_snapshot.get("date_string")
+                    temp_value = temp_value if temp_value is not None else daq_snapshot.get("temp_value")
+
+            # Timestamp: use payload timestamp or now
+            ts = payload.get("timestamp")
+            try:
+                ts_str = (ts.isoformat() if hasattr(ts, "isoformat") else str(ts)) if ts else dt.datetime.now().isoformat()
+            except Exception:
+                ts_str = dt.datetime.now().isoformat()
+
+            line = [
+                ts_str,
+                idx if idx is not None else "",
+                name or "",
+                cycle or "",
+                phase or "",
+                f"{float(target):.3f}" if isinstance(target, (int, float)) else "",
+                f"{float(sp):.3f}" if isinstance(sp, (int, float)) else "",
+                f"{float(actual):.3f}" if isinstance(actual, (int, float)) else "",
+                f"{float(v):.3f}" if isinstance(v, (int, float)) else "",
+                f"{float(c):.3f}" if isinstance(c, (int, float)) else "",
+                str(bool(out)) if out is not None else "",
+                f"{float(tc1):.3f}" if isinstance(tc1, (int, float)) else "",
+                f"{float(tc2):.3f}" if isinstance(tc2, (int, float)) else "",
+                "",  # tests_pin_pout_functional not provided by test manager snapshots
+                "",  # tests_sig_a_performance
+                "",  # tests_na_performance
+                str(bool(rf_on_off)) if rf_on_off is not None else "",
+                str(fault_status) if fault_status is not None else "",
+                str(bandpath) if bandpath is not None else "",
+                str(int(gain_value)) if isinstance(gain_value, (int, float)) else "",
+                str(date_string) if date_string is not None else "",
+                str(float(temp_value)) if isinstance(temp_value, (int, float)) else "",
+            ]
+            with open(self.telemetry_path, "a", encoding="utf-8") as f:
+                f.write(",".join(map(str, line)) + "\n")
+        except Exception as e:
+            print(e)
 
     def _get_psu_snapshot(self):
         v = c = out = None
@@ -370,6 +598,24 @@ class LynxThermalCycleManager:
 
         return tc1_temp, tc2_temp
 
+    def _get_daq_snapshot(self):
+        """Read data from the DAQ if available."""
+        daq = getattr(self.test_manager, "daq", None)
+        if daq is None:
+            return None
+        try:
+            rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value = daq.read_status_return()
+            return {
+                "rf_on_off": rf_on_off,
+                "fault_status": fault_status,
+                "bandpath": bandpath,
+                "gain_value": gain_value,
+                "date_string": date_string,
+                "temp_value": temp_value,
+            }
+        except (OSError, ValueError, RuntimeError, TypeError):
+            return None
+
     def _log_telemetry(self, phase: str, step=None, setpoint_c: Optional[float] = None,
                         pin_pout_functional: Optional[bool] = None,
                         sig_a_performance: Optional[bool] = None,
@@ -377,22 +623,28 @@ class LynxThermalCycleManager:
         if self.telemetry_path is None:
             return
         try:
-            idx = getattr(step, "_index", None)
-            name = getattr(step, "step_name", "") if step is not None else ""
-            cycle = getattr(step, "temp_cycle_type", "") if step is not None else ""
-            target = getattr(step, "temperature", None) if step is not None else None
-            if setpoint_c is not None:
-                sp = setpoint_c
-            elif step is not None and isinstance(target, (int, float)):
+            idx = getattr(self.current_step, "_index", None)
+            name = getattr(self.current_step, "step_name", "") if self.current_step is not None else ""
+            cycle = getattr(self.current_step, "temp_cycle_type", "") if self.current_step is not None else ""
+            target = getattr(self.current_step, "temperature", None) if self.current_step is not None else None
+
+            # Resolve setpoint for logging in a safe way
+            sp: Optional[float] = None
+            if self.temp_controller is not None:
                 try:
-                    sp = target + float(getattr(step, "temp_controller_offset", 0.0) or 0.0)
-                except (TypeError, ValueError):
+                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                except (OSError, ValueError, RuntimeError, TypeError):
                     sp = None
-            else:
-                sp = None
+            if sp is None and setpoint_c is not None:
+                try:
+                    sp = float(setpoint_c)
+                except (ValueError, TypeError):
+                    sp = None
             actual = self._read_actual_temp()
             v, c, out = self._get_psu_snapshot()
             tc1, tc2 = self._get_tc_snapshot()
+
+            daq_snapshot = self._get_daq_snapshot()
 
             line = [
                 dt.datetime.now().isoformat(),
@@ -411,12 +663,19 @@ class LynxThermalCycleManager:
                 str(bool(pin_pout_functional)) if pin_pout_functional is not None else "",
                 str(bool(sig_a_performance)) if sig_a_performance is not None else "",
                 str(bool(na_performance)) if na_performance is not None else "",
+                # Optionally include DAQ data if available
+                str(bool(daq_snapshot.get("rf_on_off"))) if isinstance(daq_snapshot, dict) and "rf_on_off" in daq_snapshot else "",
+                str(daq_snapshot.get("fault_status")) if isinstance(daq_snapshot, dict) and "fault_status" in daq_snapshot else "",
+                str(daq_snapshot.get("bandpath")) if isinstance(daq_snapshot, dict) and "bandpath" in daq_snapshot else "",
+                str(int(daq_snapshot.get("gain_value"))) if isinstance(daq_snapshot, dict) and isinstance(daq_snapshot.get("gain_value"), (int, float)) else "",
+                str(daq_snapshot.get("date_string")) if isinstance(daq_snapshot, dict) and "date_string" in daq_snapshot else "",
+                str(float(daq_snapshot.get("temp_value"))) if isinstance(daq_snapshot, dict) and isinstance(daq_snapshot.get("temp_value"), (int, float)) else "",
             ]
             with open(self.telemetry_path, "a", encoding="utf-8") as f:
                 f.write(",".join(map(str, line)) + "\n")
 
-            # Also emit to live callback if any
-            if self.telemetry_callback is not None:
+            # Also emit to live user callback if any (avoid the CSV proxy to prevent duplicate writes)
+            if self._user_telemetry_callback is not None:
                 try:
                     payload = {
                         "timestamp": dt.datetime.now(),
@@ -436,11 +695,11 @@ class LynxThermalCycleManager:
                         "tests_sig_a_performance": bool(sig_a_performance) if sig_a_performance is not None else None,
                         "tests_na_performance": bool(na_performance) if na_performance is not None else None,
                     }
-                    self.telemetry_callback(payload)
+                    self._user_telemetry_callback(payload)
                 except (RuntimeError, ValueError, TypeError):
                     # Never allow GUI callback failures to break the cycle
                     pass
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             # Do not break cycle on telemetry failure
             pass
 
@@ -484,6 +743,8 @@ class LynxThermalCycleManager:
 
     def _run_tests_for_step(self, step) -> None:
         sig_a_perf, na_perf, pin_func = self._map_step_tests(step)
+        # Re-attach composite callback before tests in case something overwrote it
+        self._attach_test_manager_csv_callback()
 
         # Paths list (may be None or empty)
         try:
@@ -598,6 +859,73 @@ class LynxThermalCycleManager:
                         # sp = self._control_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
                         self._maybe_log_telemetry(
                             phase="dwell",
+                            step=step,
+                            setpoint_c=setpoint_c,
+                            pin_pout_functional=pin_func,
+                            sig_a_performance=sig_a_perf,
+                            na_performance=na_perf,
+                        )
+            elif cycle_type == "INT_CYCLE":
+                cycle_count = int(getattr(step, "num_cycles", 1) or 1)
+                high_temp = float(getattr(step, "high_temp", 0.0) or 0.0)
+                high_temp_offset = float(getattr(step, "high_temp_offset", 0.0) or 0.0)
+                low_temp = float(getattr(step, "low_temp", 0.0) or 0.0)
+                low_temp_offset = float(getattr(step, "low_temp_offset", 0.0) or 0.0)
+                time_per_band = float(getattr(step, "time_per_path", 0.0) or 0.0) * 60.0  # minutes -> seconds
+                paths = getattr(self.test_manager, "paths", [])
+                even_cycle_voltage = float(getattr(step, "even_cycle_voltage", 0.0) or 0.0)
+                odd_cycle_voltage = float(getattr(step, "odd_cycle_voltage", 0.0) or 0.0)
+                soak_s = int(float(getattr(step, "soak_time_after_switch", 0) or 0) * 60)  # minutes -> seconds
+
+                low_temp_sp = low_temp + low_temp_offset
+                high_temp_sp = high_temp + high_temp_offset
+
+                for i in range(cycle_count):
+                    log_message(f"INT_CYCLE: Starting cycle {i + 1}/{cycle_count}")
+                    if i % 2 == 0:
+                        self._apply_power_for_step(even_cycle_voltage, getattr(step, "current", 0.0) or 0.0)
+                    else:
+                        self._apply_power_for_step(odd_cycle_voltage, getattr(step, "current", 0.0) or 0.0)
+
+                    self._set_setpoint(setpoint_c=high_temp_sp)
+                    self._wait_until_stable(target_c=high_temp, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=high_temp_offset)
+                    for path in paths:
+                        self.test_manager._run_pin_pout_functional_rolling(path=path, time_per_path=time_per_band)
+
+
+                    log_message(f"Dwelling at target for {soak_s}s")
+                    end = time.time() + soak_s
+                    while time.time() < end:
+                        # sp = self._control_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
+                        self._maybe_log_telemetry(
+                            phase="soak",
+                            step=step,
+                            setpoint_c=setpoint_c,
+                            pin_pout_functional=pin_func,
+                            sig_a_performance=sig_a_perf,
+                            na_performance=na_perf,
+                        )
+
+
+                    self._apply_power_for_step(0.0, 0.0)  # turn off PSU between high and low
+
+                    self._set_setpoint(setpoint_c=low_temp_sp)
+                    self._wait_until_stable(target_c=low_temp, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=low_temp_offset)
+                    if i % 2 == 0:
+                        self._apply_power_for_step(even_cycle_voltage, getattr(step, "current", 0.0) or 0.0)
+                    else:
+                        self._apply_power_for_step(odd_cycle_voltage, getattr(step, "current", 0.0) or 0.0)
+
+                        
+                    for path in paths:
+                        self.test_manager._run_pin_pout_functional_rolling(path=path, time_per_path=time_per_band)
+
+                    log_message(f"Dwelling at target for {soak_s}s")
+                    end = time.time() + soak_s
+                    while time.time() < end:
+                        # sp = self._control_update_if_enabled(target_c, poll_s=float(max(2.5, poll_s)))
+                        self._maybe_log_telemetry(
+                            phase="soak",
                             step=step,
                             setpoint_c=setpoint_c,
                             pin_pout_functional=pin_func,

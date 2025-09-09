@@ -25,18 +25,32 @@ class PaTopLevelTestManager:
         set_simulation_mode(sim)
 
         self.simulation_mode = sim
-        self.instruments_connection = {"rfpm1_input": True, "rfpm2_output": True, "rfsg": True, "rfsa": True, "na": True, "temp_probe": True, "daq": True}
+        # Track instrument connectivity (start optimistic)
+        self.instruments_connection = {
+            "rfpm1": True,
+            "rfpm2": True,
+            "rfpm1_input": True,
+            "rfpm2_output": True,
+            "rfsg": True,
+            "rfsa": True,
+            "na": True,
+            "temp_probe": True,
+            "temp_probe2": True,
+            "power_supply": True,
+            "switch_bank": True,
+            "daq": True,
+        }
+        # GUI/CSV telemetry wiring
         self.telemetry_callback = None  # optional GUI callback
+        self.external_telemetry_sink = None  # optional secondary sink (e.g., CSV proxy)
 
-        # Always initialize DAQ (real or simulated based on configuration)
-        try:
-            self.daq = get_daq_instance()
-            logger.info("DAQ connected successfully")
-        except Exception as e:
-            logger.warning("FAILED TO CONNECT TO DAQ: %s", e)
-            self.instruments_connection["daq"] = False
-            logger.warning("DAQ NOT connected")
-        
+        # Common members
+        self.running_state = False
+        self.state = False
+        # Optional temp controller reference (can be provided by thermal manager)
+        self.temp_controller = None
+        self.temp_channel = 1
+
         if not sim:
             # Import instrument drivers lazily to avoid requiring them in simulation mode
             from instruments.power_meter import E4418BPowerMeter
@@ -52,62 +66,69 @@ class PaTopLevelTestManager:
             self.rm = pyvisa.ResourceManager()
             self.instruments = self.rm.list_resources()
             logger.info("Discovered VISA resources: %s", self.instruments)
-            self.running_state = False
-            self.state = False
 
-
-            
             try:
                 self.rfpm1 = E4418BPowerMeter("GPIB0::14::INSTR", name="rfpm1")
-                logger.info("POWER METER 1 OUtSPUT CONNECTED")
-            except:
+                logger.info("POWER METER 1 OUTPUT CONNECTED")
+            except Exception:
+                self.rfpm1 = None
                 self.instruments_connection["rfpm1"] = False
 
             try:
                 self.rfpm2 = E4418BPowerMeter("GPIB0::16::INSTR", name="rfpm2")
-                logger.info("POWER METER 2 input CONNECTED")
-            except: 
+                logger.info("POWER METER 2 INPUT CONNECTED")
+            except Exception:
+                self.rfpm2 = None
                 self.instruments_connection["rfpm2"] = False
-
 
             try:
                 self.rfsg = E4438CSignalGenerator("GPIB0::30::INSTR")
-                logger.info("RFSg CONNECTED")
+                logger.info("RFSG CONNECTED")
             except Exception as e:
+                self.rfsg = None
                 self.instruments_connection["rfsg"] = False
-                logger.warning("RFSg NOT CONNECTED: %s", e, exc_info=True)
+                logger.warning("RFSG NOT CONNECTED: %s", e, exc_info=True)
 
             try:
                 self.rfsa = MXASignalAnalyzer("TCPIP0::K-N90X0A-000005.local::hislip0::INSTR")
-                logger.info("RFSa CONNECTED")
+                logger.info("RFSA CONNECTED")
             except Exception as e:
+                self.rfsa = None
                 self.instruments_connection["rfsa"] = False
-                logger.warning("RFSa NOT CONNECTED: %s", e, exc_info=True)
+                logger.warning("RFSA NOT CONNECTED: %s", e, exc_info=True)
 
             try:
                 self.na = PNAXNetworkAnalyzer("TCPIP0::K-Instr0000.local::hislip0::INSTR")
                 logger.info("NA CONNECTED")
-            except:
+            except Exception:
+                self.na = None
                 self.instruments_connection["na"] = False
                 logger.warning("NA NOT connected")
 
             try:
-
                 self.temp_probe = Agilent34401A("GPIB0::29::INSTR")
                 logger.info("TEMP PROBE 1 CONNECTED")
-            except:
+            except Exception:
+                self.temp_probe = None
                 self.instruments_connection["temp_probe"] = False
                 logger.warning("Failed to connect to temp probe 1")
 
             try:
                 self.temp_probe2 = Agilent34401A("GPIB0::22::INSTR")
-            except:
-                logger.warning("Failed to connect to temp probe 2")
+                logger.info("TEMP PROBE 2 CONNECTED")
+            except Exception:
+                self.temp_probe2 = None
                 self.instruments_connection["temp_probe2"] = False
+                logger.warning("Failed to connect to temp probe 2")
 
             try:
                 self.power_supply = PowerSupply(visa_address="GPIB0::10::INSTR")
-            except:
+                self.power_supply.set_voltage(28.0)
+                self.power_supply.set_current(2.5)
+                self.power_supply.set_output_state(True)
+                logger.info("Power Supply CONNECTED and configured")
+            except Exception:
+                self.power_supply = None
                 self.instruments_connection["power_supply"] = False
                 logger.warning("Power Supply NOT connected")
 
@@ -115,42 +136,66 @@ class PaTopLevelTestManager:
                 self.switch_bank = ZtmModular()
                 self.switch_bank.init_resource("02402230028")
                 self.switch_bank.reset_all_switches()
+                logger.info("Switch bank CONNECTED")
             except Exception as e:
-                logger.warning("Failed to connect to switch bank: %s", e, exc_info=True)
+                self.switch_bank = None
                 self.instruments_connection["switch_bank"] = False
-                logger.warning("Switch bank NOT connected")
+                logger.warning("Failed to connect to switch bank: %s", e, exc_info=True)
+
+            try:
+                self.daq = get_daq_instance()
+                logger.info("DAQ connected successfully")
+            except Exception as e:
+                self.daq = None
+                self.instruments_connection["daq"] = False
+                logger.warning("FAILED TO CONNECT TO DAQ: %s", e)
 
             from configs.configs import LynxPaConfig
-
             self.lynx_config = LynxPaConfig("LYNX_PA")
             self.lynx_config.new_sno("TEST", "THERMAL")
 
-            self.sig_a_test = BandwithPowerModuleTest(rfpm1=self.rfpm1, rfpm2=self.rfpm2, rfsa=self.rfsa, rfsg=self.rfsg, temp_probe=self.temp_probe, temp_probe2=self.temp_probe2, daq=self.daq, psu=self.power_supply, config=self.lynx_config, switch_bank=self.switch_bank)
+            # Instantiate tests
+            self.sig_a_test = BandwithPowerModuleTest(
+                rfpm1=self.rfpm1,
+                rfpm2=self.rfpm2,
+                rfsa=self.rfsa,
+                rfsg=self.rfsg,
+                temp_probe=self.temp_probe,
+                temp_probe2=self.temp_probe2,
+                daq=self.daq,
+                psu=self.power_supply,
+                config=self.lynx_config,
+                switch_bank=self.switch_bank,
+            )
+
+            self.na_test = NetworkAnalyzerModuleTest(
+                na=self.na,
+                temp_probe=self.temp_probe,
+                temp_probe2=self.temp_probe2,
+                daq=self.daq,
+                psu=self.power_supply,
+                config=self.lynx_config,
+                switch_bank=self.switch_bank,
+            )
 
             self.freqs_and_switchpaths_siga_tests = {}
-
-            self.na_test = NetworkAnalyzerModuleTest(na=self.na, temp_probe=self.temp_probe, temp_probe2=self.temp_probe2, daq=self.daq, psu=self.power_supply, config=self.lynx_config, switch_bank=self.switch_bank)
-
             self.freqs_and_switchpaths_na_tests = {}
 
             self.paths = [
                 "Band1_SN1",
-                # "Band1_SN2",
-                # "Band2_SN1",
-                # "Band2_SN2",
-                # "Band3_SN1",
-                # "Band3_SN2"
+                "Band1_SN2",
+                "Band2_SN1",
+                "Band2_SN2",
+                "Band3_SN1",
+                "Band3_SN2",
             ]
 
             self.scribe = Scribe("LYNX_PA")
             logger.info("Instrument connectivity summary: %s", self.instruments_connection)
         else:
-            # Simulation mode - set up minimal simulated instruments
-            logger.info("Running in simulation mode")
-            self.running_state = False
-            self.state = False
-            
-            # Create placeholder simulated instruments
+            # Simulation mode: initialize minimal state and config
+            self.power_supply = None
+            self.switch_bank = None
             self.rfpm1 = None
             self.rfpm2 = None
             self.rfsg = None
@@ -158,23 +203,29 @@ class PaTopLevelTestManager:
             self.na = None
             self.temp_probe = None
             self.temp_probe2 = None
-            self.power_supply = None
-            self.switch_bank = None
-            
-            # Load configuration
+
+            # DAQ (simulated or real based on hardware_config)
+            try:
+                self.daq = get_daq_instance()
+                logger.info("DAQ (sim or real) connected successfully")
+            except Exception as e:
+                self.daq = None
+                self.instruments_connection["daq"] = False
+                logger.warning("FAILED TO CONNECT TO DAQ (sim): %s", e)
+
             from configs.configs import LynxPaConfig
             self.lynx_config = LynxPaConfig("LYNX_PA")
-            
-            # Create test modules with simulated instruments (they will handle None gracefully)
-            self.sig_a_test = None  # Will be created when needed
-            self.na_test = None     # Will be created when needed
-            
+
+            # Tests will be created/used conditionally in sim; keep placeholders
+            self.sig_a_test = None
+            self.na_test = None
+
             self.freqs_and_switchpaths_siga_tests = {}
             self.freqs_and_switchpaths_na_tests = {}
-            
+
             self.paths = [
                 "HIGH_BAND_PATH1 (Vertical)",
-                "HIGH_BAND_PATH2 (Vertical)", 
+                "HIGH_BAND_PATH2 (Vertical)",
                 "HIGH_BAND_PATH3 (Vertical)",
                 "LOW_BAND_PATH1 (Vertical)",
                 "LOW_BAND_PATH2 (Vertical)",
@@ -184,22 +235,141 @@ class PaTopLevelTestManager:
                 "HIGH_BAND_PATH3 (Horizontal)",
                 "LOW_BAND_PATH1 (Horizontal)",
                 "LOW_BAND_PATH2 (Horizontal)",
-                "LOW_BAND_PATH3 (Horizontal)"
+                "LOW_BAND_PATH3 (Horizontal)",
             ]
-            
+
             self.scribe = Scribe("LYNX_PA")
-            logger.info("Simulation mode initialized - DAQ available: %s", hasattr(self, 'daq') and self.daq is not None)
+            logger.info(
+                "Simulation mode initialized - DAQ available: %s", hasattr(self, 'daq') and self.daq is not None
+            )
 
     # --- GUI/telemetry wiring ---
     def set_telemetry_callback(self, callback):
         """Register a GUI telemetry callback compatible with live_view."""
         self.telemetry_callback = callback
 
+    def set_external_telemetry_sink(self, sink):
+        """Register a secondary sink (e.g., CSV writer proxy) that will also receive telemetry payloads."""
+        self.external_telemetry_sink = sink
+
+    def set_temp_controller(self, controller, channel: int = 1):
+        """Optionally attach a temperature controller so telemetry can include setpoint/actual."""
+        self.temp_controller = controller
+        try:
+            self.temp_channel = int(channel)
+        except Exception:
+            self.temp_channel = 1
+
     def _emit_telemetry(self, payload: dict):
+        # Enrich payload with missing details (timestamp, PSU, temps, DAQ) before emitting
+        data = dict(payload) if isinstance(payload, dict) else {}
+
+        # Timestamp
+        try:
+            if not data.get("timestamp"):
+                data["timestamp"] = dt.datetime.now()
+        except Exception:
+            pass
+
+        # PSU snapshot
+        try:
+            psu = getattr(self, "power_supply", None)
+            need_v = data.get("psu_voltage") is None
+            need_c = data.get("psu_current") is None
+            need_o = data.get("psu_output") is None
+            if psu is not None and (need_v or need_c or need_o):
+                if need_v:
+                    try:
+                        data["psu_voltage"] = psu.get_voltage()
+                    except Exception:
+                        pass
+                if need_c:
+                    try:
+                        data["psu_current"] = psu.get_current()
+                    except Exception:
+                        pass
+                if need_o:
+                    try:
+                        data["psu_output"] = psu.get_output_state()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Temperature probes
+        try:
+            if data.get("tc1_temp") is None:
+                tp = getattr(self, "temp_probe", None)
+                if tp is not None and hasattr(tp, "measure_temp"):
+                    try:
+                        data["tc1_temp"] = tp.measure_temp()
+                    except Exception:
+                        pass
+            if data.get("tc2_temp") is None:
+                tp2 = getattr(self, "temp_probe2", None)
+                if tp2 is not None and hasattr(tp2, "measure_temp"):
+                    try:
+                        data["tc2_temp"] = tp2.measure_temp()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # DAQ status (rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value)
+        try:
+            needed = ["rf_on_off", "fault_status", "bandpath", "gain_value", "date_string", "temp_value"]
+            if any(data.get(k) is None for k in needed):
+                daq = getattr(self, "daq", None)
+                if daq is not None and hasattr(daq, "read_status_return"):
+                    try:
+                        rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value = daq.read_status_return()
+                        if data.get("rf_on_off") is None:
+                            data["rf_on_off"] = rf_on_off
+                        if data.get("fault_status") is None:
+                            data["fault_status"] = fault_status
+                        if data.get("bandpath") is None:
+                            data["bandpath"] = bandpath
+                        if data.get("gain_value") is None:
+                            data["gain_value"] = gain_value
+                        if data.get("date_string") is None:
+                            data["date_string"] = date_string
+                        if data.get("temp_value") is None:
+                            data["temp_value"] = temp_value
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Temp controller (actual temp and setpoint) if available
+        try:
+            tc = getattr(self, "temp_controller", None)
+            ch = getattr(self, "temp_channel", 1)
+            if tc is not None:
+                if data.get("setpoint_c") is None and hasattr(tc, "query_setpoint"):
+                    try:
+                        data["setpoint_c"] = float(tc.query_setpoint(ch))
+                    except Exception:
+                        pass
+                if data.get("actual_temp_c") is None and hasattr(tc, "query_actual"):
+                    try:
+                        raw = tc.query_actual(ch)
+                        data["actual_temp_c"] = float(raw) 
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Emit to sinks/callbacks
+        sink = getattr(self, "external_telemetry_sink", None)
+        if sink is not None:
+            try:
+                sink(data)
+            except Exception:
+                pass
         cb = getattr(self, "telemetry_callback", None)
         if cb is not None:
             try:
-                cb(payload)
+                cb(data)
             except Exception:
                 pass
 
@@ -236,15 +406,12 @@ class PaTopLevelTestManager:
                 out = psu.get_output_state()
             except Exception:
                 pass
+
+        
+
         payload = {
             "timestamp": dt.datetime.now(),
-            "step_index": None,
-            "step_name": None,
-            "cycle_type": None,
             "phase": phase,
-            "target_c": None,
-            "setpoint_c": None,
-            "actual_temp_c": None,
             "psu_voltage": float(v) if isinstance(v, (int, float)) else None,
             "psu_current": float(c) if isinstance(c, (int, float)) else None,
             "psu_output": bool(out) if out is not None else None,
@@ -922,6 +1089,46 @@ class PaTopLevelTestManager:
                     self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
                     self._emit_periodic_snapshot(phase="sig_a-power-meter")
         
+        self.clean_up()
+
+    def _run_pin_pout_functional_rolling(self, path, time_per_path):
+        # initial snapshot to GUI
+        self._emit_periodic_snapshot(phase="functional-rolling-start")
+
+        logger.info("SIG_A tests: starting")
+        switchpath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["switchpath"]
+        freqs = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["freqs"]
+        attenuation_settings = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["attenuation_settings"]
+        waveforms = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["waveforms"]
+        power_meter_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["power_meter_filepath"]
+
+        self.switch_bank.set_all_switches(switchpath)
+        frequency = freqs[1]
+        attenuation_setting = 0
+        waveform = waveforms[0]
+
+        self._emit_periodic_snapshot(phase="sig_a-setup")
+        output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
+        input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
+        bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
+        rfsg_input_power = self.sig_a_test.input_power_validation(frequency, target_power=-10, start_power=-20, input_loss=input_loss)
+
+        self.rfsg.set_frequency(frequency=frequency)
+        self.rfsg.set_amplitude(rfsg_input_power)
+        self._emit_periodic_snapshot(phase="pin_pout_functional_rolling_setup")
+
+        t_start = time.time()
+        while time.time() - t_start < time_per_path:
+            golden_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
+                bandpath=bandpath,
+                frequency=frequency,
+                waveform=waveform,
+                gain_setting=attenuation_setting,
+                output_loss=output_loss
+            )
+            self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
+            self._emit_periodic_snapshot(phase="pin_pout_functional_rolling")
+
         self.clean_up()
 
 if __name__ == "__main__":

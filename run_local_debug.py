@@ -22,10 +22,10 @@ siggen.stop()
 
 switch.reset_all_switches()
 
-
+power_supply.set_voltage(28)
+power_supply.set_current(2.5)
 power_supply.set_output_state(False)
-power_supply.set_voltage(0)
-power_supply.set_current(0)
+
 
 voltage = power_supply.get_voltage()
 current = power_supply.get_current()
@@ -33,8 +33,15 @@ current = power_supply.get_current()
 print(f"Voltage: {voltage} V")
 print(f"Current: {current} A")
 
+from instruments.daq import RS422_DAQ
+# daq = RS422_DAQ()
+# daq.disable_rf()
+# daq.set_band("NONE")
+# stuff = daq.read_status_return()
+# print(f"DAQ Status: {stuff}")
+
 temp_controller.set_setpoint(1, 25)
-temp_controller.set_chamber_state(False)
+temp_controller.set_chamber_state(True)
 chamber_state = temp_controller.query_chamber_state()
 temp = temp_controller.query_actual(1)
 

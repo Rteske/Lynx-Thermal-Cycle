@@ -92,6 +92,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
 
             # Register callback to manager
             self.manager.set_telemetry_callback(self._telemetry_callback)
+            # Note: test_manager telemetry is already forwarded by the thermal manager's callback.
+            # Setting both would double-emit into the GUI; keep only the manager callback.
 
         def choose_and_start(self):
             path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Thermal Profile JSON", os.getcwd(), "JSON (*.json)")
@@ -105,10 +107,42 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             # shift to Qt thread via signal
             self.model.telemetry.emit(payload)
 
+        def _coerce_timestamp(self, ts_val: Any) -> dt.datetime:
+            """Best-effort conversion of various timestamp representations to datetime."""
+            try:
+                if isinstance(ts_val, dt.datetime):
+                    return ts_val
+                if isinstance(ts_val, (int, float)):
+                    # treat as POSIX seconds
+                    return dt.datetime.fromtimestamp(float(ts_val))
+                if isinstance(ts_val, str):
+                    # try ISO8601 first
+                    try:
+                        return dt.datetime.fromisoformat(ts_val)
+                    except Exception:
+                        # common fallback: parse 'YYYY-MM-DD HH:MM:SS' (no timezone)
+                        try:
+                            return dt.datetime.strptime(ts_val, "%Y-%m-%d %H:%M:%S")
+                        except Exception:
+                            # give up, return now
+                            return dt.datetime.now()
+            except Exception:
+                pass
+            return dt.datetime.now()
+
+        def _first(self, payload: Dict[str, Any], *keys: str) -> Any:
+            for k in keys:
+                if k in payload and payload[k] is not None:
+                    return payload[k]
+            return None
+
         @QtCore.pyqtSlot(dict)
         def on_telemetry(self, payload: Dict[str, Any]):
+            # Consume payload as-is; do not query instruments from GUI thread.
+
             # Update time vector
-            ts = payload.get('timestamp', dt.datetime.now())
+            ts_raw = self._first(payload, 'timestamp', 'ts', 'time')
+            ts = self._coerce_timestamp(ts_raw)
             if self.t0 is None:
                 self.t0 = ts.timestamp()
             t = ts.timestamp() - self.t0
@@ -118,17 +152,18 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             def to_num(val):
                 return float(val) if isinstance(val, (int, float)) else None
 
-            self.actual.append(to_num(payload.get('actual_temp_c')))
-            self.target.append(to_num(payload.get('target_c')))
-            self.setpoint.append(to_num(payload.get('setpoint_c')))
-            self.v.append(to_num(payload.get('psu_voltage')))
-            self.c.append(to_num(payload.get('psu_current')))
-            self.tc1.append(to_num(payload.get('tc1_temp')))
-            self.tc2.append(to_num(payload.get('tc2_temp')))
+            # Accept a few common aliases for resilience across emitters
+            self.actual.append(to_num(self._first(payload, 'actual_temp_c', 'actual_c', 'controller_actual_c')))
+            self.target.append(to_num(self._first(payload, 'target_c', 'target_temp_c', 'target')))
+            self.setpoint.append(to_num(self._first(payload, 'setpoint_c', 'temp_setpoint_c', 'controller_setpoint_c')))
+            self.v.append(to_num(self._first(payload, 'psu_voltage', 'psu_v', 'voltage')))
+            self.c.append(to_num(self._first(payload, 'psu_current', 'psu_i', 'current')))
+            self.tc1.append(to_num(self._first(payload, 'tc1_temp', 'tc1_c', 'tc_1_c')))
+            self.tc2.append(to_num(self._first(payload, 'tc2_temp', 'tc2_c', 'tc_2_c')))
 
             # Update curves with non-None filtering
             def clean(data):
-                return [x if isinstance(x, (int, float)) else None for x in data]
+                return [x if isinstance(x, (int, float)) else 0 for x in data]
 
             self.curve_actual.setData(self.t, clean(self.actual))
             self.curve_target.setData(self.t, clean(self.target))
@@ -139,8 +174,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.curve_tc2.setData(self.t, clean(self.tc2))
 
             # Status text
-            phase = payload.get('phase', '')
-            step = payload.get('step_name', '')
+            phase = self._first(payload, 'phase', 'test_phase') or ''
+            step = self._first(payload, 'step_name', 'step') or ''
             self.lbl_status.setText(f"{phase} — {step}")
 
         def drain_log_queue(self):
