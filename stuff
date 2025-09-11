@@ -1,0 +1,230 @@
+def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c: float, window_s: int, poll_s: int, initial_delay_s: int, temp_offset: float):
+        """Two-phase temperature stabilization:
+        Phase 1: Wait for TC to get into target band, with PID adjustments based on stability outside band
+        Phase 2: Settlement logic once in target band - wait for stable temperature within tolerance
+        """
+        # Apply setpoint once (target + offset)
+        sp = float(target_c + (temp_offset or 0.0))
+        self._set_setpoint(sp)
+
+        # PID state for corrections when taking too long to reach target band
+        pid_enabled = True
+        Kp, Ki, Kd = 0.1, 0.02, 0.0  # conservative gains; derivative disabled by default
+        integ = 0.0
+        last_err: Optional[float] = None
+        last_pid_ts: Optional[float] = None
+        min_pid_interval_s = max(10, int(poll_s * 2))  # don't adjust too frequently
+        max_step_per_adjust_c = 1.0  # clamp single adjustment magnitude
+        max_sp_offset_c = 10.0  # clamp total deviation from (target + offset)
+        base_sp = float(sp)
+
+        def _apply_sp_nudge(new_sp: float):
+            nonlocal sp
+            sp = float(new_sp)
+            try:
+                if self.temp_controller is None:
+                    log_message(f"[SIM] PID: setpoint -> {sp:.2f} C")
+                else:
+                    self.temp_controller.set_setpoint(self.temp_channel, sp)
+                    # Brief wait for setpoint to take effect
+                    time.sleep(5)
+                    log_message(f"PID: setpoint -> {sp:.2f} C (CH{self.temp_channel})")
+            except (SerialException, ValueError, OSError) as e:
+                log_message(f"PID: failed to set setpoint: {e}")
+
+        # Measurement function (prefer TC1; fallback to controller)
+        def read_meas() -> Optional[float]:
+            v = self._get_pid_measurement(target_c)
+            return v if isinstance(v, (int, float)) else self._read_actual_temp()
+
+        # Optional initial delay
+        try:
+            scaled_initial_delay = int(max(0, float(initial_delay_s)) * max(0.01, float(self.dwell_scale)))
+        except (TypeError, ValueError):
+            scaled_initial_delay = int(initial_delay_s)
+        if scaled_initial_delay and scaled_initial_delay > 0:
+            log_message(
+                f"INIT: delay={scaled_initial_delay}s before stabilization | target={target_c:.2f}C, band=±{float(target_temp_delta_c):.2f}C, tol={tol_c:.2f}C"
+            )
+            end = time.time() + scaled_initial_delay
+            while time.time() < end:
+                self._maybe_log_telemetry(phase="init-delay", step=self.current_step, setpoint_c=sp)
+                time.sleep(min(5, max(1, int(poll_s))))
+
+        # PHASE 1: Wait for TC to get into target band
+        log_message(f"PHASE 1: Waiting for TC to reach target band ±{target_temp_delta_c:.2f}C")
+        poll = max(1, int(poll_s))
+        phase1_start = time.time()
+        max_phase1_time_s = 30 * 60  # 30 minutes max for phase 1
+        missing_meas_count = 0
+        
+        # Phase 1 uses smaller rolling window for faster stability detection
+        phase1_window_s = window_s / 4  # Quarter of main window
+        phase1_window_values: list[tuple[float, float]] = []
+        stability_threshold = 0.75  # Require 75% of tolerance for stability in phase 1
+
+        while True:
+            meas = read_meas()
+            if meas is None:
+                missing_meas_count += 1
+                if self.simulation_mode and missing_meas_count >= 3:
+                    log_message("PHASE 1: No measurement (SIM) — proceeding to phase 2")
+                    break
+                if (time.time() - phase1_start) > max_phase1_time_s:
+                    log_message("PHASE 1: Timeout reached — proceeding to phase 2")
+                    break
+                log_message("PHASE 1: No measurement; waiting…")
+                time.sleep(poll)
+                continue
+
+            now = time.time()
+            band_err = abs(float(meas) - float(target_c))
+            in_band = band_err <= float(target_temp_delta_c)
+            phase1_elapsed = now - phase1_start
+            
+            # Update rolling window for phase 1
+            phase1_window_values.append((now, float(meas)))
+            cutoff = now - phase1_window_s
+            phase1_window_values = [(ts, v) for ts, v in phase1_window_values if ts >= cutoff]
+            
+            # Calculate stability using reusable function
+            min_stability_time =  phase1_window_s * 0.5  # At least 15s or half the window
+            span, has_enough_time, coverage_s, sample_count = self._calculate_stability(
+                phase1_window_values, phase1_window_s, min_time_s=min_stability_time
+            )
+            is_stable = span <= (float(tol_c) * stability_threshold)  # 75% of tolerance requirement
+
+            log_message(
+                f"PHASE 1: temp={meas:.2f}C target={target_c:.2f}C band_err={band_err:.3f}C in_band={in_band} "
+                f"span={span:.3f}C stable={is_stable} cov={coverage_s:.1f}s time_ok={has_enough_time} elapsed={phase1_elapsed:.1f}s"
+            )
+            self._maybe_log_telemetry(phase="phase1-approach", step=self.current_step, setpoint_c=sp)
+
+            # Check if we're in the target band
+            if in_band:
+                log_message("PHASE 1: TC reached target band — proceeding to settlement phase")
+                break
+
+            # Enable PID adjustments if outside band AND temperature is stable (within 75% tolerance)
+            if pid_enabled and not in_band and is_stable and has_enough_time:
+                err = float(target_c) - float(meas)  # positive if too cold; increase setpoint
+                # Rate limit PID adjustments
+                if last_pid_ts is None or (now - last_pid_ts) >= min_pid_interval_s:
+                    dt_s = (now - last_pid_ts) if last_pid_ts is not None else float(poll)
+                    # Integrator with clamping to avoid wind-up
+                    integ = max(-max_sp_offset_c, min(max_sp_offset_c, integ + err * dt_s))
+                    deriv = 0.0 if (Kd == 0 or last_err is None or dt_s <= 0) else (err - last_err) / dt_s
+                    output = Kp * err + Ki * integ + Kd * deriv
+                    # Clamp single-step adjustment
+                    output = max(-max_step_per_adjust_c, min(max_step_per_adjust_c, output))
+                    # Clamp total deviation from the base setpoint
+                    new_sp = base_sp + max(-max_sp_offset_c, min(max_sp_offset_c, (sp - base_sp) + output))
+                    # Apply nudge
+                    log_message(
+                        f"PHASE 1 PID: Stable but outside band (err {err:.3f}C, span {span:.3f}C). Adjusting setpoint by {output:.3f}C to {new_sp:.2f}C"
+                    )
+                    _apply_sp_nudge(new_sp)
+                    last_pid_ts = now
+                    last_err = err
+                    
+                    # Give the system time to respond to the adjustment to prevent overcorrection
+                    # Make settling time proportional to the magnitude of the adjustment
+                    adjustment_magnitude = abs(output)
+                    base_settle_time = 60  # Base minimum settling time in seconds
+                    magnitude_factor = 420  # seconds per degree of adjustment (2 minutes per degree)
+                    adjustment_settle_time = max(base_settle_time, int(base_settle_time + (adjustment_magnitude * magnitude_factor)))
+                    # Cap the maximum settling time to prevent excessively long waits
+                    max_settle_time = min_pid_interval_s // 2  # Half of the PID interval
+                    adjustment_settle_time = min(adjustment_settle_time, max_settle_time)
+                    
+                    log_message(f"PHASE 1 PID: Waiting {adjustment_settle_time}s for {adjustment_magnitude:.3f}C adjustment to take effect...")
+                    settle_end = time.time() + adjustment_settle_time
+                    while time.time() < settle_end:
+                        self._maybe_log_telemetry(phase="pid-adjustment-settle", step=self.current_step, setpoint_c=sp)
+                        time.sleep(min(10, max(5, int(poll_s))))
+                    log_message("PHASE 1 PID: Adjustment settling time complete, resuming monitoring")
+
+            # Check timeout
+            if phase1_elapsed > max_phase1_time_s:
+                log_message("PHASE 1: Maximum time reached — proceeding to phase 2")
+                break
+
+            time.sleep(poll)
+
+        # PHASE 2: Settlement logic - wait for stable temperature within tolerance
+        log_message(f"PHASE 2: Settlement - waiting for stable temperature within ±{tol_c:.2f}C tolerance")
+        window_duration = max(1, int(window_s))
+        window_values: list[tuple[float, float]] = []
+        end_required = time.time() + window_duration
+        settle_start = time.time()
+        max_settle_time_s = max(60 * 60, 2 * window_duration)
+
+        while True:
+            meas = read_meas()
+            if meas is None:
+                missing_meas_count += 1
+                if self.simulation_mode and missing_meas_count >= 6:
+                    log_message("PHASE 2: No measurement (SIM) — treating as stable")
+                    return
+                if (time.time() - settle_start) > max_settle_time_s:
+                    log_message("PHASE 2: Settlement timeout reached — proceeding")
+                    return
+                log_message("PHASE 2: No measurement; waiting…")
+                time.sleep(poll)
+                continue
+
+            now = time.time()
+            window_values.append((now, float(meas)))
+            # Allow window to grow slightly larger than target to ensure we can achieve 100% coverage
+            # Use 110% of window duration to allow for some buffer
+            cutoff = now - (window_duration * 1.1)
+            window_values = [(ts, v) for ts, v in window_values if ts >= cutoff]
+
+            # Use reusable stability calculation function
+            # For Phase 2, require 100% of the window duration to be covered
+            min_stability_time = float(window_duration)  # Require 100% coverage
+            span, has_enough_time, coverage_s, sample_count = self._calculate_stability(
+                window_values, window_duration, min_time_s=min_stability_time
+            )
+            band_err = abs(float(meas) - float(target_c))
+            in_band = band_err <= float(target_temp_delta_c)
+            span_within_tol = span <= float(tol_c)
+            # For Phase 2, require full coverage (100% of window duration)
+            has_full_coverage = coverage_s >= window_duration
+
+            log_message(
+                f"PHASE 2: n={sample_count} span={span:.3f}C tol={tol_c:.3f}C span_ok={span_within_tol} in_band={in_band} "
+                f"cov={coverage_s:.1f}s/{window_duration}s time_ok={has_enough_time} full_cov={has_full_coverage}"
+            )
+            self._maybe_log_telemetry(phase="phase2-settle", step=self.current_step, setpoint_c=sp)
+
+            # Primary stability check: in band and span within tolerance
+            if span_within_tol and in_band:
+                # Debug: Show why we're choosing each path
+                log_message(f"PHASE 2 DEBUG: has_full_coverage={has_full_coverage} (need {window_duration:.1f}s, have {coverage_s:.1f}s)")
+                log_message(f"PHASE 2 DEBUG: has_enough_time={has_enough_time} (same as full coverage)")
+                log_message(f"PHASE 2 DEBUG: now >= end_required = {now >= end_required} (end_required={end_required:.1f}, now={now:.1f})")
+                
+                # If window has full coverage and enough time, we're stable
+                if has_full_coverage and has_enough_time:
+                    log_message(f"PHASE 2: Stable — window span {span:.3f}C ≤ tol {tol_c:.3f}C and in target band over full {coverage_s:.1f}s window")
+                    return
+                # Fallback: If coverage is close to full (95%) and we've been waiting long enough, accept it
+                elif coverage_s >= window_duration * 0.95 and now >= end_required:
+                    log_message(f"PHASE 2: Stable (near-full) — window span {span:.3f}C ≤ tol {tol_c:.3f}C and in target band over {coverage_s:.1f}s (95%+ coverage)")
+                    return
+                else:
+                    remaining_time = max(0, end_required - now)
+                    coverage_pct = (coverage_s / window_duration) * 100
+                    log_message(f"PHASE 2: Good conditions, waiting {remaining_time:.1f}s more - need {coverage_pct:.1f}% -> 100% coverage")
+            else:
+                # Reset the settlement window if not stable
+                end_required = time.time() + window_duration
+                failed_conditions = []
+                if not span_within_tol:
+                    failed_conditions.append(f"span({span:.3f}>{tol_c:.3f})")
+                if not in_band:
+                    failed_conditions.append(f"not_in_band({band_err:.3f}>{target_temp_delta_c:.3f})")
+                log_message(f"PHASE 2: Resetting window timer, failed: {', '.join(failed_conditions)}")
+
+            time.sleep(poll)
