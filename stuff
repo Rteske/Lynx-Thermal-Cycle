@@ -228,3 +228,38 @@ def _wait_until_stable(self, target_c: float, target_temp_delta_c: float, tol_c:
                 log_message(f"PHASE 2: Resetting window timer, failed: {', '.join(failed_conditions)}")
 
             time.sleep(poll)
+
+
+    def _calculate_stability(self, window_values: list[tuple[float, float]], window_duration: int, min_time_s: float = 30.0) -> tuple[float, bool, float, int]:
+        """Calculate stability metrics for a rolling window of temperature values.
+        
+        Args:
+            window_values: List of (timestamp, temperature) tuples
+            window_duration: Expected window duration in seconds  
+            min_time_s: Minimum time duration required for valid stability calculation
+            
+        Returns:
+            (span, has_enough_time, coverage_seconds, sample_count)
+        """
+        if not window_values:
+            return 0.0, False, 0.0, 0
+            
+        vals = [v for _, v in window_values]
+        sample_count = len(vals)
+        
+        # Calculate actual time coverage
+        if len(window_values) >= 2:
+            coverage_s = window_values[-1][0] - window_values[0][0]
+        else:
+            coverage_s = 0.0
+            
+        # Time-based requirement: need at least min_time_s of data
+        has_enough_time = coverage_s >= min_time_s
+        
+        # Calculate span (temperature variance) - need at least 2 samples
+        if sample_count >= 2:
+            span = max(vals) - min(vals)
+        else:
+            span = 0.0
+            
+        return span, has_enough_time, coverage_s, sample_count
