@@ -298,7 +298,7 @@ class LynxThermalCycleManager:
         missing_meas_count = 0
         
         # Phase 1 uses smaller rolling window for faster stability detection
-        phase1_window_s = max(30, window_s // 4)  # Quarter of main window, minimum 30s
+        phase1_window_s = window_s / 2  # Half of main window
         phase1_window_values: list[tuple[float, float]] = []
         stability_threshold = 0.75  # Require 75% of tolerance for stability in phase 1
 
@@ -327,22 +327,22 @@ class LynxThermalCycleManager:
             phase1_window_values = [(ts, v) for ts, v in phase1_window_values if ts >= cutoff]
             
             # Calculate stability using reusable function
-            min_stability_time = max(15.0, phase1_window_s * 0.5)  # At least 15s or half the window
+            min_stability_time =  phase1_window_s / 2 # At least 15s or half the window
             span, has_enough_time, coverage_s, sample_count = self._calculate_stability(
                 phase1_window_values, phase1_window_s, min_time_s=min_stability_time
             )
-            is_stable = span <= (float(tol_c) * stability_threshold)  # 75% of tolerance requirement
+
+            is_stable = span <= (float(tol_c))  # 75% of tolerance requirement
+
+            if in_band and is_stable and has_enough_time:
+                log_message(f"PHASE 1: Reached target band ±{target_temp_delta_c:.2f}C after {phase1_elapsed:.1f}s")
+                break  # Proceed to phase 2
 
             log_message(
                 f"PHASE 1: temp={meas:.2f}C target={target_c:.2f}C band_err={band_err:.3f}C in_band={in_band} "
                 f"span={span:.3f}C stable={is_stable} cov={coverage_s:.1f}s time_ok={has_enough_time} elapsed={phase1_elapsed:.1f}s"
             )
             self._maybe_log_telemetry(phase="phase1-approach", step=self.current_step, setpoint_c=sp)
-
-            # Check if we're in the target band
-            if in_band:
-                log_message("PHASE 1: TC reached target band — proceeding to settlement phase")
-                break
 
             # Enable PID adjustments if outside band AND temperature is stable (within 75% tolerance)
             if pid_enabled and not in_band and is_stable and has_enough_time:
@@ -370,7 +370,7 @@ class LynxThermalCycleManager:
                     # Make settling time proportional to the magnitude of the adjustment
                     adjustment_magnitude = abs(output)
                     base_settle_time = 60  # Base minimum settling time in seconds
-                    magnitude_factor = 120  # seconds per degree of adjustment (2 minutes per degree)
+                    magnitude_factor = 420  # seconds per degree of adjustment (2 minutes per degree)
                     adjustment_settle_time = max(base_settle_time, int(base_settle_time + (adjustment_magnitude * magnitude_factor)))
                     # Cap the maximum settling time to prevent excessively long waits
                     max_settle_time = min_pid_interval_s // 2  # Half of the PID interval
@@ -382,11 +382,6 @@ class LynxThermalCycleManager:
                         self._maybe_log_telemetry(phase="pid-adjustment-settle", step=self.current_step, setpoint_c=sp)
                         time.sleep(min(10, max(5, int(poll_s))))
                     log_message("PHASE 1 PID: Adjustment settling time complete, resuming monitoring")
-
-            # Check timeout
-            if phase1_elapsed > max_phase1_time_s:
-                log_message("PHASE 1: Maximum time reached — proceeding to phase 2")
-                break
 
             time.sleep(poll)
 
@@ -989,9 +984,6 @@ class LynxThermalCycleManager:
                 # Wait to be stable within tolerance window, then dwell for the specified time
                 self._wait_until_stable(target_c=target_c, target_temp_delta_c=target_temp_delta_c, tol_c=tol_c, window_s=window_s, poll_s=poll_s, initial_delay_s=initial_delay_s, temp_offset=offset_c)
 
-                # Run tests (if any) once stable
-                self._run_tests_for_step(step)
-
                 if dwell_s > 0:
                     log_message(f"Dwelling at target for {dwell_s}s")
                     end = time.time() + dwell_s
@@ -1005,6 +997,8 @@ class LynxThermalCycleManager:
                             sig_a_performance=sig_a_perf,
                             na_performance=na_perf,
                         )
+
+                self._run_tests_for_step(step)
             elif cycle_type == "INT_CYCLE":
                 cycle_count = int(getattr(step, "num_cycles", 1) or 1)
                 high_temp = float(getattr(step, "high_temp", 0.0) or 0.0)

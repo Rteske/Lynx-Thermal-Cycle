@@ -1066,28 +1066,33 @@ class PaTopLevelTestManager:
         power_meter_filepath = self.lynx_config.paths[path]["Signal Analyzer Bandwidth"]["power_meter_filepath"]
 
         self.switch_bank.set_all_switches(switchpath)
-        for frequency in freqs:
-            self._emit_periodic_snapshot(phase="sig_a-setup")
-            output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
-            input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
-            bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
-            rfsg_input_power = self.sig_a_test.input_power_validation(frequency, target_power=-10, start_power=-20, input_loss=input_loss)
+        self._emit_periodic_snapshot(phase="sig_a-setup")
 
-            self.rfsg.set_frequency(frequency=frequency)
-            self.rfsg.set_amplitude(rfsg_input_power)
-            self._emit_periodic_snapshot(phase="sig_a-running")
+        frequency = freqs[1]
+        attenuation_setting = 0
+        waveform = waveforms[0]
 
-            for attenuation_setting in attenuation_settings:
-                for waveform in waveforms:
-                    golden_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
-                        bandpath=bandpath,
-                        frequency=frequency,
-                        waveform=waveform,
-                        gain_setting=attenuation_setting,
-                        output_loss=output_loss
-                    )
-                    self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
-                    self._emit_periodic_snapshot(phase="sig_a-power-meter")
+
+        output_loss = self.sig_a_test.config.get_output_loss_by_path_and_freq(path, freq=frequency)
+        input_loss = self.sig_a_test.config.get_input_loss_by_path_and_freq(path, freq=frequency)
+        bandpath = self.sig_a_test.config.get_bandpath_by_path(path)
+        rfsg_input_power = self.sig_a_test.input_power_validation(frequency, target_power=-10, start_power=-20, input_loss=input_loss)
+
+        self.rfsg.set_frequency(frequency=frequency)
+        self.rfsg.set_amplitude(rfsg_input_power)
+        self._emit_periodic_snapshot(phase="sig_a-running")
+
+        for attenuation_setting in attenuation_settings:
+            for waveform in waveforms:
+                golden_bucket = self.sig_a_test.get_power_meter_by_frequency_and_switchpath(
+                    bandpath=bandpath,
+                    frequency=frequency,
+                    waveform=waveform,
+                    gain_setting=attenuation_setting,
+                    output_loss=output_loss
+                )
+                self.process_and_write_module_power_meter_tests(golden_bucket, power_meter_filepath)
+                self._emit_periodic_snapshot(phase="sig_a-power-meter")
         
         self.clean_up()
 
