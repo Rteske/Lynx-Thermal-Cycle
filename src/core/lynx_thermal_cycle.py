@@ -15,16 +15,20 @@ except ImportError:
 # Temp probe accessed via duck typing (measure_temp())
 from src.core.temp import TempProfileManager
 from src.utils.logging_utils import log_message
+from instruments.tvac_auto_explor import AutoExplor, SetpointID, ReadoutID, ButtonID, AutoExplorStatus
 
 class LynxThermalCycleManager:
-    def __init__(self, simulation_mode=False, dwell_scale: float = 1.0):
+    def __init__(self, simulation_mode=False, dwell_scale: float = 1.0, tvac_ip: str = "192.168.20.12"):
         """
-        Initialize the Lynx Thermal Cycle Manager.
+        Initialize the Lynx Thermal Cycle Manager with TVAC AutoExplor integration.
         
         Args:
             simulation_mode (bool): If True, uses simulated instruments. If False, uses real hardware.
+            dwell_scale (float): Scale factor for dwell/initial delays
+            tvac_ip (str): IP address of the TVAC AutoExplor system
         """
         self.simulation_mode = simulation_mode
+        self.tvac_ip = tvac_ip
         # Scale factor for dwell/initial delays (e.g., 0.02 makes 1 minute -> ~1.2s)
         try:
             self.dwell_scale = float(dwell_scale)
@@ -53,8 +57,6 @@ class LynxThermalCycleManager:
             def __init__(self):
                 self.instruments_connection = {"rfsa": False, "na": False, "daq": False}
                 self.paths = ["SIM_PATH"]
-                self.temp_probe = None
-                self.temp_probe2 = None
                 self.power_supply = _SimPowerSupply()
             def run_and_process_tests(self, *args, **kwargs):
                 _ = (args, kwargs)
@@ -75,27 +77,65 @@ class LynxThermalCycleManager:
         # Attach CSV+GUI composite telemetry callback to the test manager.
         self._attach_test_manager_csv_callback()
 
-        # Initialize temperature controller and turn chamber ON
+        # Initialize TVAC AutoExplor system for temperature control
         try:
             if not simulation_mode:
-                # Lazy import to avoid requiring pyserial in simulation mode
-                from instruments.temp_controller import TempController  # type: ignore
-                self.temp_controller = TempController()
-                self.temp_channel = 1
+                self.tvac_controller = AutoExplor(self.tvac_ip)
+                self.tvac_controller.request_control()
+                
+                # Get available setpoints for temperature control
+                setpoint_status, setpoint_mask = self.tvac_controller.get_setpoint_configuration()
+                if setpoint_status == AutoExplorStatus.SUCCESS.value:
+                    setpoint_info = self.tvac_controller.get_all_setpoint_info(setpoint_mask)
+                    log_message(f"TVAC setpoints available: {list(setpoint_info.keys())}")
+                    
+                    # Try to find platen heating control setpoint
+                    self.temp_setpoint_id = None
+                    self.pressure_setpoint_id = None
+                    
+                    for name, info in setpoint_info.items():
+                        if 'platen' in name.lower() and 'heating' in name.lower():
+                            self.temp_setpoint_id = info['id']
+                            log_message(f"Using {name} (ID: {self.temp_setpoint_id}) for temperature control")
+                        elif 'pressure' in name.lower() and 'control' in name.lower():
+                            self.pressure_setpoint_id = info['id']
+                            log_message(f"Using {name} (ID: {self.pressure_setpoint_id}) for pressure control")
+                    
+                    if self.temp_setpoint_id is None and setpoint_info:
+                        # Use first available setpoint as fallback for temperature
+                        first_setpoint = next(iter(setpoint_info.values()))
+                        self.temp_setpoint_id = first_setpoint['id']
+                        log_message(f"Using fallback setpoint {first_setpoint['name']} (ID: {self.temp_setpoint_id}) for temperature")
+                    
+                    if self.pressure_setpoint_id is None:
+                        # Set default pressure setpoint ID
+                        self.pressure_setpoint_id = SetpointID.PRESSURE_CONTROL.value
+                        log_message(f"Using default pressure setpoint (ID: {self.pressure_setpoint_id})")
+                else:
+                    self.temp_setpoint_id = SetpointID.PLATEN_HEATING_CONTROL.value  # Default fallback
+                    self.pressure_setpoint_id = SetpointID.PRESSURE_CONTROL.value
+                    
+                log_message("TVAC AutoExplor initialized for temperature control")
             else:
-                # Use simulated temperature controller
-                self.temp_controller = None
-                self.temp_channel = 1
-                print("Using simulated temperature controller")
-            log_message("TempController initialized and chamber turned ON")
-        except (SerialException, OSError, RuntimeError) as e:
+                # Use simulated TVAC controller
+                self.tvac_controller = None
+                self.temp_setpoint_id = SetpointID.PLATEN_HEATING_CONTROL.value
+                self.pressure_setpoint_id = SetpointID.PRESSURE_CONTROL.value
+                log_message("Using simulated TVAC controller")
+                
+        except (OSError, RuntimeError, ConnectionError) as e:
             # If we can't connect, keep None and operate in no-op mode
-            self.temp_controller = None
-            self.temp_channel = 1
-            log_message(f"TempController not available: {e}")
+            self.tvac_controller = None
+            self.temp_setpoint_id = SetpointID.PLATEN_HEATING_CONTROL.value
+            self.pressure_setpoint_id = SetpointID.PRESSURE_CONTROL.value
+            log_message(f"TVAC AutoExplor not available: {e}")
 
-        # Provide temp controller reference to the top-level test manager so it can enrich telemetry safely
-        self.test_manager.set_temp_controller(self.temp_controller, self.temp_channel)
+        # Provide TVAC controller reference to the top-level test manager
+        if hasattr(self.test_manager, 'set_tvac_controller'):
+            self.test_manager.set_tvac_controller(self.tvac_controller)
+        
+        # Note: Temperature measurements now come exclusively from TVAC ReadoutIDs
+        # No external thermocouples are used - all temperature data from TVAC system
         # Telemetry CSV setup
         try:
             logs_dir = os.path.join(os.getcwd(), "logs")
@@ -107,6 +147,7 @@ class LynxThermalCycleManager:
                     f.write(
                         "timestamp,step_index,step_name,cycle_type,phase,target_c,setpoint_c,actual_temp_c," \
                         "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp," \
+                        "pressure_torr,pressure_setpoint,pressure_mode," \
                         "tests_pin_pout_functional,tests_sig_a_performance,tests_na_performance,rf_on_off,fault_status,bandpath,gain_value,date_string,temp_value\n"
                     )
             log_message(f"Telemetry CSV -> {self.telemetry_path}")
@@ -146,15 +187,23 @@ class LynxThermalCycleManager:
             log_message(f"Warning: PSU power off failed: {e}")
 
     def _set_setpoint(self, setpoint_c: float):
-        if self.temp_controller is None:
-            log_message(f"[SIM] Would set chamber setpoint to {setpoint_c:.2f} C")
+        if self.tvac_controller is None:
+            log_message(f"[SIM] Would set TVAC setpoint to {setpoint_c:.2f} C")
             return
         try:
-            self.temp_controller.set_setpoint(self.temp_channel, setpoint_c)
-            log_message(f"Chamber setpoint -> {setpoint_c:.2f} C (CH{self.temp_channel})")
-            # Wait until the temp_controller actual temperature of the plate finishes updating
-            self.temp_controller.set_chamber_state(True)
+            # Set the target value for the temperature setpoint
+            status, _ = self.tvac_controller.set_setpoint_target_value(self.temp_setpoint_id, setpoint_c)
+            if status == AutoExplorStatus.SUCCESS.value:
+                # Enable the setpoint controller
+                status, _ = self.tvac_controller.set_setpoint_state(self.temp_setpoint_id, True)
+                if status == AutoExplorStatus.SUCCESS.value:
+                    log_message(f"TVAC setpoint -> {setpoint_c:.2f} C (ID: {self.temp_setpoint_id})")
+                else:
+                    log_message(f"Failed to enable TVAC setpoint controller (status: {status})")
+            else:
+                log_message(f"Failed to set TVAC setpoint value (status: {status})")
 
+            # Wait until the setpoint is applied
             timeout = 30  # seconds
             start_time = time.time()
             while True:
@@ -162,48 +211,144 @@ class LynxThermalCycleManager:
                 if actual_temp is not None:
                     break
                 if time.time() - start_time >= timeout:
-                    log_message("Setpoint applied; no controller reading yet (timeout). Proceeding.")
+                    log_message("Setpoint applied; no readout available yet (timeout). Proceeding.")
                     break
                 self._maybe_log_telemetry(phase="setpoint-wait", step=self.current_step, setpoint_c=setpoint_c)
                 time.sleep(0.5)
-        except (SerialException, ValueError, OSError) as e:
-            log_message(f"Failed to set setpoint: {e}")
+        except (OSError, ValueError) as e:
+            log_message(f"Failed to set TVAC setpoint: {e}")
 
     def _read_actual_temp(self) -> Optional[float]:
-        if self.temp_controller is None:
+        if self.tvac_controller is None:
             return None
         try:
-            self.temp_controller.connector.read_to_clear()
-            raw = self.temp_controller.query_actual(self.temp_channel)
-            # raw may be bytes like b' +25.3' or similar; try to extract a floa
-            return float(raw)
-        except (SerialException, ValueError, OSError):
+            # Try to read from platen thermocouple first
+            status, temp_value = self.tvac_controller.get_readout_process_value(ReadoutID.SAMPLE_1)
+            if status == AutoExplorStatus.SUCCESS.value and temp_value is not None:
+                return float(temp_value)
+            
+            # Fallback: try to read process value from the setpoint controller itself
+            status, process_value = self.tvac_controller.get_setpoint_process_value(self.temp_setpoint_id)
+            if status == AutoExplorStatus.SUCCESS.value and process_value is not None:
+                return float(process_value)
+                
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _read_setpoint_temp(self) -> Optional[float]:
+        """Read the current setpoint value from TVAC."""
+        if self.tvac_controller is None:
             return None
+        try:
+            status, target_value = self.tvac_controller.get_setpoint_target_value(self.temp_setpoint_id)
+            if status == AutoExplorStatus.SUCCESS.value and target_value is not None:
+                return float(target_value)
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _set_pressure_setpoint(self, pressure_torr: float):
+        """Set the pressure setpoint in Torr."""
+        if self.tvac_controller is None:
+            log_message(f"[SIM] Would set TVAC pressure setpoint to {pressure_torr:.2f} Torr")
+            return
+        try:
+            # Set the target value for the pressure setpoint
+            status, _ = self.tvac_controller.set_setpoint_target_value(self.pressure_setpoint_id, pressure_torr)
+            if status == AutoExplorStatus.SUCCESS.value:
+                # Enable the pressure setpoint controller
+                status, _ = self.tvac_controller.set_setpoint_state(self.pressure_setpoint_id, True)
+                if status == AutoExplorStatus.SUCCESS.value:
+                    log_message(f"TVAC pressure setpoint -> {pressure_torr:.2f} Torr (ID: {self.pressure_setpoint_id})")
+                else:
+                    log_message(f"Failed to enable TVAC pressure setpoint controller (status: {status})")
+            else:
+                log_message(f"Failed to set TVAC pressure setpoint value (status: {status})")
+        except (OSError, ValueError) as e:
+            log_message(f"Failed to set TVAC pressure setpoint: {e}")
+
+    def _read_actual_pressure(self) -> Optional[float]:
+        """Read the current pressure from TVAC system."""
+        if self.tvac_controller is None:
+            return None
+        try:
+            # Try to read from pressure readout first
+            status, pressure_value = self.tvac_controller.get_readout_process_value(ReadoutID.PRESSURE)
+            if status == AutoExplorStatus.SUCCESS.value and pressure_value is not None:
+                return float(pressure_value)
+            
+            # Fallback: try to read process value from the pressure setpoint controller itself
+            status, process_value = self.tvac_controller.get_setpoint_process_value(self.pressure_setpoint_id)
+            if status == AutoExplorStatus.SUCCESS.value and process_value is not None:
+                return float(process_value)
+                
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _read_pressure_setpoint(self) -> Optional[float]:
+        """Read the current pressure setpoint value from TVAC."""
+        if self.tvac_controller is None:
+            return None
+        try:
+            status, target_value = self.tvac_controller.get_setpoint_target_value(self.pressure_setpoint_id)
+            if status == AutoExplorStatus.SUCCESS.value and target_value is not None:
+                return float(target_value)
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _get_pressure_control_mode(self) -> Optional[str]:
+        """Get the current pressure control mode (vent, purge, etc.)."""
+        if self.tvac_controller is None:
+            return None
+        try:
+            status, mode = self.tvac_controller.get_setpoint_mode(self.pressure_setpoint_id)
+            if status == AutoExplorStatus.SUCCESS.value:
+                return mode
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _set_pressure_control_mode(self, mode: str):
+        """Set the pressure control mode (vent, purge, actprg, etc.)."""
+        if self.tvac_controller is None:
+            log_message(f"[SIM] Would set TVAC pressure control mode to {mode}")
+            return
+        try:
+            status, _ = self.tvac_controller.set_setpoint_mode(self.pressure_setpoint_id, mode)
+            if status == AutoExplorStatus.SUCCESS.value:
+                log_message(f"TVAC pressure control mode -> {mode} (ID: {self.pressure_setpoint_id})")
+            else:
+                log_message(f"Failed to set TVAC pressure control mode (status: {status})")
+        except (OSError, ValueError) as e:
+            log_message(f"Failed to set TVAC pressure control mode: {e}")
 
     def _tcs_within_band(self, target_c: float, tol_c: float) -> tuple[bool, int, list[float]]:
-        """Check if available thermocouples are within target±tol.
+        """Check if available TVAC temperature readouts are within target±tol.
         Returns (all_ok, count_present, values_present). If no TCs present, (False, 0, [])."""
-        tc1, _ = self._get_tc_snapshot()
-        # Use only the primary temp_probe (tc1) for control decisions
-        vals: list[float] = [float(tc1)] if isinstance(tc1, (int, float)) else []
-        if not vals:
+        if self.tvac_controller is None:
             return False, 0, []
-        all_ok = all(abs(v - target_c) <= tol_c for v in vals)
-        return all_ok, len(vals), vals
-
-    def _get_pid_measurement(self, _target_c: float) -> Optional[float]:
-        """Get temperature measurement for PID control - prefers TC1 probe via duck typing."""
+        
         try:
-            tc = getattr(self.test_manager, "temp_probe", None)
-            # Duck-typing: any object with measure_temp() is acceptable
-            if tc is not None and hasattr(tc, "measure_temp"):
-                temp = tc.measure_temp()  # type: ignore[attr-defined]
-                if isinstance(temp, (int, float)):
-                    return float(temp)
-        except (RuntimeError, OSError, ValueError) as e:
-            log_message(f"Error reading temp_probe: {e}")
+            # Get all temperature readings from TVAC
+            temp_readings = self.tvac_controller.get_temperature_readings()
+            vals: list[float] = []
+            
+            for name, info in temp_readings.items():
+                if info['is_valid'] and info['value'] is not None:
+                    vals.append(float(info['value']))
+            
+            if not vals:
+                return False, 0, []
+                
+            all_ok = all(abs(v - target_c) <= tol_c for v in vals)
+            return all_ok, len(vals), vals
+        except (OSError, ValueError):
+            return False, 0, []
 
-    def _calculate_stability(self, window_values: list[tuple[float, float]], window_duration: int, min_time_s: float = 30.0) -> tuple[float, bool, float, int]:
+    def _calculate_stability(self, window_values, window_s, min_time_s):
         """Calculate stability metrics for a rolling window of temperature values.
         
         Args:
@@ -261,20 +406,23 @@ class LynxThermalCycleManager:
             nonlocal sp
             sp = float(new_sp)
             try:
-                if self.temp_controller is None:
+                if self.tvac_controller is None:
                     log_message(f"[SIM] PID: setpoint -> {sp:.2f} C")
                 else:
-                    self.temp_controller.set_setpoint(self.temp_channel, sp)
-                    # Brief wait for setpoint to take effect
-                    time.sleep(5)
-                    log_message(f"PID: setpoint -> {sp:.2f} C (CH{self.temp_channel})")
-            except (SerialException, ValueError, OSError) as e:
+                    status, _ = self.tvac_controller.set_setpoint_target_value(self.temp_setpoint_id, sp)
+                    if status == AutoExplorStatus.SUCCESS.value:
+                        # Brief wait for setpoint to take effect
+                        time.sleep(5)
+                        log_message(f"PID: TVAC setpoint -> {sp:.2f} C (ID: {self.temp_setpoint_id})")
+                    else:
+                        log_message(f"PID: failed to set TVAC setpoint (status: {status})")
+            except (OSError, ValueError) as e:
                 log_message(f"PID: failed to set setpoint: {e}")
 
         # Measurement function (prefer TC1; fallback to controller)
         def read_meas() -> Optional[float]:
-            v = self._get_pid_measurement(target_c)
-            return v if isinstance(v, (int, float)) else self._read_actual_temp()
+            temp = self._read_actual_temp()
+            return temp
 
         # Optional initial delay
         try:
@@ -479,9 +627,9 @@ class LynxThermalCycleManager:
         # Temp controller setpoint and actual
         try:
             sp = None
-            if getattr(self, "temp_controller", None) is not None:
+            if getattr(self, "tvac_controller", None) is not None:
                 try:
-                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                    sp = self._read_setpoint_temp()
                 except Exception:
                     sp = None
             snapshot["setpoint_c"] = sp
@@ -504,14 +652,24 @@ class LynxThermalCycleManager:
             snapshot["psu_current"] = None
             snapshot["psu_output"] = None
 
-        # Thermocouples
         try:
-            tc1, tc2 = self._get_tc_snapshot()
-            snapshot["tc1_temp"] = float(tc1) if isinstance(tc1, (int, float)) else None
-            snapshot["tc2_temp"] = float(tc2) if isinstance(tc2, (int, float)) else None
+            # Get TVAC temperature readings instead of external TCs
+            tvac_temps = self._get_tvac_temp_snapshot()
+            snapshot["tc1_temp"] = tvac_temps.get('platen_tc')
+            snapshot["tc2_temp"] = tvac_temps.get('sample_1')  # Use first sample TC as TC2
         except Exception:
             snapshot["tc1_temp"] = None
             snapshot["tc2_temp"] = None
+
+        # Pressure readings from TVAC
+        try:
+            snapshot["pressure_torr"] = self._read_actual_pressure()
+            snapshot["pressure_setpoint"] = self._read_pressure_setpoint()
+            snapshot["pressure_mode"] = self._get_pressure_control_mode()
+        except Exception:
+            snapshot["pressure_torr"] = None
+            snapshot["pressure_setpoint"] = None
+            snapshot["pressure_mode"] = None
 
         # DAQ fields
         try:
@@ -615,9 +773,9 @@ class LynxThermalCycleManager:
                 target = getattr(self.current_step, "temperature", None)
 
             sp = payload.get("setpoint_c")
-            if sp is None and self.temp_controller is not None:
+            if sp is None and self.tvac_controller is not None:
                 try:
-                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                    sp = self._read_setpoint_temp()
                 except Exception:
                     sp = None
 
@@ -625,7 +783,7 @@ class LynxThermalCycleManager:
             if actual is None:
                 actual = self._read_actual_temp()
 
-            # PSU/TC snapshots from payload with fallback to live reads
+            # PSU snapshots from payload with fallback to live reads
             v = payload.get("psu_voltage")
             c = payload.get("psu_current")
             out = payload.get("psu_output")
@@ -635,12 +793,24 @@ class LynxThermalCycleManager:
                 c = c if isinstance(c, (int, float)) else pc
                 out = out if isinstance(out, bool) else pout
 
+            # TC: prefer payload, otherwise live from TVAC
             tc1 = payload.get("tc1_temp")
             tc2 = payload.get("tc2_temp")
             if tc1 is None or tc2 is None:
-                _tc1, _tc2 = self._get_tc_snapshot()
-                tc1 = tc1 if isinstance(tc1, (int, float)) else _tc1
-                tc2 = tc2 if isinstance(tc2, (int, float)) else _tc2
+                tvac_temps = self._get_tvac_temp_snapshot()
+                tc1 = tc1 if isinstance(tc1, (int, float)) else tvac_temps.get('platen_tc')
+                tc2 = tc2 if isinstance(tc2, (int, float)) else tvac_temps.get('sample_1')
+
+            # Pressure: prefer payload, otherwise live from TVAC
+            pressure_actual = payload.get("pressure_torr")
+            pressure_setpoint = payload.get("pressure_setpoint")
+            pressure_mode = payload.get("pressure_mode")
+            if pressure_actual is None:
+                pressure_actual = self._read_actual_pressure()
+            if pressure_setpoint is None:
+                pressure_setpoint = self._read_pressure_setpoint()
+            if pressure_mode is None:
+                pressure_mode = self._get_pressure_control_mode()
 
             # DAQ: prefer payload, otherwise live
             rf_on_off = payload.get("rf_on_off")
@@ -680,6 +850,9 @@ class LynxThermalCycleManager:
                 str(bool(out)) if out is not None else "",
                 f"{float(tc1):.3f}" if isinstance(tc1, (int, float)) else "",
                 f"{float(tc2):.3f}" if isinstance(tc2, (int, float)) else "",
+                f"{float(pressure_actual):.3f}" if isinstance(pressure_actual, (int, float)) else "",
+                f"{float(pressure_setpoint):.3f}" if isinstance(pressure_setpoint, (int, float)) else "",
+                str(pressure_mode) if pressure_mode is not None else "",
                 "",  # tests_pin_pout_functional not provided by test manager snapshots
                 "",  # tests_sig_a_performance
                 "",  # tests_na_performance
@@ -715,23 +888,81 @@ class LynxThermalCycleManager:
         return v, c, out
 
     def _get_tc_snapshot(self):
-        """Read temperatures from attached thermocouples if available."""
-        tc1_temp = tc2_temp = None
-        tc1 = getattr(self.test_manager, "temp_probe", None)
-        tc2 = getattr(self.test_manager, "temp_probe2", None)
-        try:
-            if tc1 is not None and hasattr(tc1, "measure_temp"):
-                tc1_temp = tc1.measure_temp()  # type: ignore[attr-defined]
-        except (OSError, ValueError):
-            pass
+        """Read temperatures from TVAC temperature readouts instead of external TCs."""
+        return self._get_tvac_temp_snapshot_values()
 
+    def _get_tvac_temp_snapshot(self):
+        """Get TVAC temperature readings as a dictionary."""
+        if self.tvac_controller is None:
+            return {}
+        
         try:
-            if tc2 is not None and hasattr(tc2, "measure_temp"):
-                tc2_temp = tc2.measure_temp()  # type: ignore[attr-defined]
-        except (OSError, ValueError):
-            pass
+            temp_readings = self.tvac_controller.get_temperature_readings()
+            temp_dict = {}
+            
+            for name, info in temp_readings.items():
+                if info['is_valid'] and info['value'] is not None:
+                    # Map common TVAC readout names to simpler keys
+                    if 'platen' in name.lower():
+                        temp_dict['platen_tc'] = float(info['value'])
+                    elif 'sample_1' in name.lower():
+                        temp_dict['sample_1'] = float(info['value'])
+                    elif 'sample_2' in name.lower():
+                        temp_dict['sample_2'] = float(info['value'])
+                    # Add other temperature readouts as needed
+                    temp_dict[name.lower()] = float(info['value'])
+            
+            return temp_dict
+        except Exception:
+            return {}
 
+    def _get_tvac_temp_snapshot_values(self):
+        """Read temperatures from TVAC readouts, returning tuple for compatibility."""
+        tvac_temps = self._get_tvac_temp_snapshot()
+        tc1_temp = tvac_temps.get('platen_tc')
+        tc2_temp = tvac_temps.get('sample_1')  # Use first sample as TC2
         return tc1_temp, tc2_temp
+
+    def _get_tvac_snapshot(self):
+        """Read key TVAC system status."""
+        if self.tvac_controller is None:
+            return {}
+        
+        try:
+            # Get temperature readings
+            temp_readings = self.tvac_controller.get_temperature_readings()
+            
+            # Get pressure readings
+            pressure_readings = self.tvac_controller.get_pressure_readings()
+            
+            # Get setpoint information
+            setpoint_info = self.tvac_controller.get_setpoint_info(self.temp_setpoint_id)
+            pressure_setpoint_info = self.tvac_controller.get_setpoint_info(self.pressure_setpoint_id)
+            
+            # Get key button states
+            power_status, power_state = self.tvac_controller.get_button_state(ButtonID.POWER)
+            vent_status, vent_state = self.tvac_controller.get_button_state(ButtonID.VENT)
+            rough_status, rough_state = self.tvac_controller.get_button_state(ButtonID.ROUGH)
+            
+            return {
+                'temp_readings': temp_readings,
+                'pressure_readings': pressure_readings,
+                'setpoint_info': setpoint_info,
+                'pressure_setpoint_info': pressure_setpoint_info,
+                'power_on': power_state['on_off'] if power_status == AutoExplorStatus.SUCCESS.value else None,
+                'vent_open': vent_state['on_off'] if vent_status == AutoExplorStatus.SUCCESS.value else None,
+                'rough_pump_on': rough_state['on_off'] if rough_status == AutoExplorStatus.SUCCESS.value else None,
+                'setpoint_active': setpoint_info['state']['on_off'] if setpoint_info.get('state') else None,
+                'pressure_setpoint_active': pressure_setpoint_info['state']['on_off'] if pressure_setpoint_info.get('state') else None,
+                'current_target': setpoint_info.get('target_value'),
+                'current_ttv': setpoint_info.get('ttv_value'),
+                'is_ramping': setpoint_info.get('is_ramping'),
+                'pressure_target': pressure_setpoint_info.get('target_value'),
+                'pressure_mode': pressure_setpoint_info.get('current_mode')
+            }
+        except Exception as e:
+            log_message(f"Error reading TVAC snapshot: {e}")
+            return {}
 
     def _get_daq_snapshot(self):
         """Read data from the DAQ if available."""
@@ -765,9 +996,9 @@ class LynxThermalCycleManager:
 
             # Resolve setpoint for logging in a safe way
             sp: Optional[float] = None
-            if self.temp_controller is not None:
+            if self.tvac_controller is not None:
                 try:
-                    sp = float(self.temp_controller.query_setpoint(self.temp_channel))
+                    sp = self._read_setpoint_temp()
                 except (OSError, ValueError, RuntimeError, TypeError):
                     sp = None
             if sp is None and setpoint_c is not None:
@@ -777,7 +1008,12 @@ class LynxThermalCycleManager:
                     sp = None
             actual = self._read_actual_temp()
             v, c, out = self._get_psu_snapshot()
-            tc1, tc2 = self._get_tc_snapshot()
+            tc1, tc2 = self._get_tc_snapshot()  # Now uses TVAC readouts
+            
+            # Get pressure data
+            pressure_actual = self._read_actual_pressure()
+            pressure_setpoint = self._read_pressure_setpoint()
+            pressure_mode = self._get_pressure_control_mode()
 
             daq_snapshot = self._get_daq_snapshot()
 
@@ -795,6 +1031,9 @@ class LynxThermalCycleManager:
                 str(bool(out)) if out is not None else "",
                 f"{tc1:.3f}" if isinstance(tc1, (int, float)) else "",
                 f"{tc2:.3f}" if isinstance(tc2, (int, float)) else "",
+                f"{pressure_actual:.3f}" if isinstance(pressure_actual, (int, float)) else "",
+                f"{pressure_setpoint:.3f}" if isinstance(pressure_setpoint, (int, float)) else "",
+                str(pressure_mode) if pressure_mode is not None else "",
                 str(bool(pin_pout_functional)) if pin_pout_functional is not None else "",
                 str(bool(sig_a_performance)) if sig_a_performance is not None else "",
                 str(bool(na_performance)) if na_performance is not None else "",
@@ -919,8 +1158,60 @@ class LynxThermalCycleManager:
                     na_performance=na_perf,
                 )
 
+    def _initialize_tvac_system(self):
+        """Initialize TVAC system for thermal cycling."""
+        if self.tvac_controller is None:
+            log_message("TVAC controller not available - running in simulation mode")
+            return
+        
+        try:
+            # Ensure we have control
+            status = self.tvac_controller.request_control()
+            if status != AutoExplorStatus.SUCCESS:
+                log_message(f"Warning: Could not request TVAC control (status: {status})")
+            
+            # Turn on main power if not already on
+            power_status, power_state = self.tvac_controller.get_button_state(ButtonID.POWER)
+            if power_status == AutoExplorStatus.SUCCESS.value and not power_state['on_off']:
+                log_message("Turning on TVAC system power")
+                self.tvac_controller.set_button_state(ButtonID.POWER, True)
+                time.sleep(5)  # Wait for system to power up
+            
+            # Get system status
+            tvac_snapshot = self._get_tvac_snapshot()
+            log_message(f"TVAC system initialized - Power: {tvac_snapshot.get('power_on')}, Vent: {tvac_snapshot.get('vent_open')}, Rough: {tvac_snapshot.get('rough_pump_on')}")
+            
+            # Log available temperature readings
+            temp_readings = tvac_snapshot.get('temp_readings', {})
+            if temp_readings:
+                log_message("Available TVAC temperature readings:")
+                for name, info in temp_readings.items():
+                    if info['is_valid']:
+                        log_message(f"  {name}: {info['formatted_value']}")
+            
+            # Log available pressure readings
+            pressure_readings = tvac_snapshot.get('pressure_readings', {})
+            if pressure_readings:
+                log_message("Available TVAC pressure readings:")
+                for name, info in pressure_readings.items():
+                    if info['is_valid']:
+                        log_message(f"  {name}: {info['formatted_value']}")
+            
+            # Log pressure control mode and available modes
+            pressure_info = tvac_snapshot.get('pressure_setpoint_info', {})
+            if pressure_info:
+                current_mode = pressure_info.get('current_mode')
+                available_modes = pressure_info.get('available_modes', [])
+                log_message(f"Pressure control mode: {current_mode}, Available modes: {available_modes}")
+            
+        except Exception as e:
+            log_message(f"Error initializing TVAC system: {e}")
+
     def run_thermal_cycle(self, profile_path):
         """Execute the temperature steps defined in a profile JSON file."""
+        # Initialize TVAC system before starting cycle
+        self._initialize_tvac_system()
+        
         self.temp_profile_manager = TempProfileManager(profile_path)
         all_steps = self.temp_profile_manager.get_all_steps()
 
@@ -961,6 +1252,20 @@ class LynxThermalCycleManager:
 
             # Apply PSU state per step
             self._apply_power_for_step(getattr(step, "voltage", 0.0) or 0.0, getattr(step, "current", 0.0) or 0.0)
+            
+            # Apply pressure control if specified in step
+            pressure_setpoint = getattr(step, "pressure_torr", None)
+            pressure_mode = getattr(step, "pressure_mode", None)
+            
+                
+            if pressure_setpoint is not None:
+                try:
+                    pressure_val = float(pressure_setpoint)
+                    self._set_pressure_setpoint(pressure_val)
+                    log_message(f"Pressure setpoint -> {pressure_val:.3f} Torr, mode: {pressure_mode}")
+                except (ValueError, TypeError):
+                    log_message(f"Invalid pressure setpoint: {pressure_setpoint}")
+            
             # Apply setpoint once per step; control/wait happens below per type
             self._set_setpoint(setpoint_c=setpoint_c)
 
