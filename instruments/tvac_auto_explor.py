@@ -1,5 +1,4 @@
 import socket
-import json
 import threading
 from enum import Enum, IntFlag
 
@@ -301,9 +300,9 @@ class AutoExplor:
 
     # --- Configuration helpers ---
     def _get_configuration(self, command: str, buffer_size: int = 1024):
-        """Send a configuration query command and try to parse JSON body.
+        """Send a configuration query command and parse integer response.
 
-        Returns (status_code:int|None, body:dict|str|None)
+        Returns (status_code:int|None, config_mask:int|None)
         """
         # Ensure proper line ending
         if not command.endswith("\r\n"):
@@ -313,31 +312,48 @@ class AutoExplor:
         raw = self.client.receive(buffer_size)
         status_code, body = self.parse_message(raw if raw is not None else "")
 
-        # Try to parse JSON if present
+        # Parse the body as an integer bitmask
         if body is not None:
             try:
-                parsed = json.loads(body)
-                return status_code, parsed
-            except (json.JSONDecodeError, TypeError):
-                # Return raw body if not JSON
-                return status_code, body
+                # Try to parse as integer (decimal or hex)
+                config_mask = int(body, 0) if isinstance(body, str) else int(body)
+                return status_code, config_mask
+            except (ValueError, TypeError):
+                # Return None if can't parse as integer
+                return status_code, None
         return status_code, None
 
     def get_device_configuration(self):
-        """GetDeviceConfiguration -> returns status, config (dict or raw str)."""
+        """GetDeviceConfiguration -> returns status, config_mask (int)."""
         return self._get_configuration("GetDeviceConfiguration")
 
     def get_readout_configuration(self):
-        """GetReadoutConfiguration -> returns status, config (dict or raw str)."""
+        """GetReadoutConfiguration -> returns status, config_mask (int)."""
         return self._get_configuration("GetReadoutConfiguration")
 
     def get_button_configuration(self):
-        """GetButtonConfiguration -> returns status, config (dict or raw str)."""
+        """GetButtonConfiguration -> returns status, config_mask (int)."""
         return self._get_configuration("GetButtonConfiguration")
 
     def get_setpoint_configuration(self):
-        """GetSetpointConfiguration -> returns status, config (dict or raw str)."""
+        """GetSetpointConfiguration -> returns status, config_mask (int)."""
         return self._get_configuration("GetSetpointConfiguration")
+
+    def extract_device_mask(self, config_mask):
+        """Extract device mask - config_mask IS the device mask."""
+        return config_mask
+
+    def extract_readout_mask(self, config_mask):
+        """Extract readout mask - config_mask IS the readout mask."""
+        return config_mask
+
+    def extract_button_mask(self, config_mask):
+        """Extract button mask - config_mask IS the button mask."""
+        return config_mask
+
+    def extract_setpoint_mask(self, config_mask):
+        """Extract setpoint mask - config_mask IS the setpoint mask."""
+        return config_mask
 
     def __del__(self):
         self.client.disconnect()
@@ -345,40 +361,36 @@ class AutoExplor:
 if __name__ == "__main__":
     auto_explor = AutoExplor('192.168.20.12')
     auto_explor.client.run_discovery_scan()
+    
+    # Get individual configurations
     device_status, device_cfg = auto_explor.get_device_configuration()
     print("DeviceConfiguration status:", device_status)
     print("DeviceConfiguration:", device_cfg)
-
-    if isinstance(device_cfg, dict):
-        # Heuristic keys that might contain the mask
-        for key in ("DEVICEIDS", "DeviceIds", "device_ids", "devices", "config"):
-            if key in device_cfg:
-                print("DeviceIDs present:", decode_device_mask(device_cfg[key]))
-                break
-
+    
+    device_mask = auto_explor.extract_device_mask(device_cfg)
+    if device_mask is not None:
+        print("DeviceIDs present:", decode_device_mask(device_mask))
+    
     readout_status, readout_cfg = auto_explor.get_readout_configuration()
     print("ReadoutConfiguration status:", readout_status)
     print("ReadoutConfiguration:", readout_cfg)
-    if isinstance(readout_cfg, dict):
-        for key in ("READOUTIDS", "ReadoutIds", "readout_ids", "readouts", "config"):
-            if key in readout_cfg:
-                print("ReadoutIDs present:", decode_readout_mask(readout_cfg[key]))
-                break
-
+    
+    readout_mask = auto_explor.extract_readout_mask(readout_cfg)
+    if readout_mask is not None:
+        print("ReadoutIDs present:", decode_readout_mask(readout_mask))
+    
     button_status, button_cfg = auto_explor.get_button_configuration()
     print("ButtonConfiguration status:", button_status)
     print("ButtonConfiguration:", button_cfg)
-    if isinstance(button_cfg, dict):
-        for key in ("BUTTONIDS", "ButtonIds", "button_ids", "buttons", "config"):
-            if key in button_cfg:
-                print("ButtonIDs present:", decode_button_mask(button_cfg[key]))
-                break
-
+    
+    button_mask = auto_explor.extract_button_mask(button_cfg)
+    if button_mask is not None:
+        print("ButtonIDs present:", decode_button_mask(button_mask))
+    
     setpoint_status, setpoint_cfg = auto_explor.get_setpoint_configuration()
     print("SetpointConfiguration status:", setpoint_status)
     print("SetpointConfiguration:", setpoint_cfg)
-    if isinstance(setpoint_cfg, dict):
-        for key in ("SETPOINTIDS", "SetpointIds", "setpoint_ids", "setpoints", "config"):
-            if key in setpoint_cfg:
-                print("SetpointIDs present:", decode_setpoint_mask(setpoint_cfg[key]))
-                break
+    
+    setpoint_mask = auto_explor.extract_setpoint_mask(setpoint_cfg)
+    if setpoint_mask is not None:
+        print("SetpointIDs present:", decode_setpoint_mask(setpoint_mask))
