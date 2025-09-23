@@ -1,0 +1,189 @@
+1.	The profile for Protoqual (Flight-1) TVAC testing is shown in Figure 18.
+2.	Each numbered plateau requires a specific set of test data taken as well as control and telemetry communication with the DUT. 
+Note:  The functional temperature plateaus are different for each unit.  These plateaus will be set to the Protoqual (Flight-1) functional temperatures.
+3.	Set the chamber temperature to 25°C.
+4.	Verify DUT temperature stabilization at 25°C.
+6.	TVAC Temperature profile Step 1 (cycle 1)
+o	Performance tests and characterization data at 25°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+7.	Set the chamber temperature to 50°C.
+8.	Verify DUT temperature stabilization at 50°C.
+9.	TVAC Temperature profile Step 2 (cycle 1)
+o	Performance tests and characterization data at 50°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+8.	Set the chamber temperature to 66°C.
+9.	Verify DUT temperature stabilization at 66°C.
+10.	TVAC Temperature profile Step 3 (cycle 1)
+o	Turn off 28V and dwell for 1 hour
+o	Apply 28V to DUT and perform Hot Start test at 66°C
+o	Functional tests and characterization data at 66°C plateau (28V)
+o	Functional tests
+	RF output with -10 dBm input (CW input) in High Gain state (each band) 
+	Command & response, operating modes, RF output stabilization
+	Power consumption (each band)
+	Voltage and temperature telemetry with timestamps
+o	2-hr soak powered-on (40 minutes in each band)
+o	May have chamber temperature controller set at all plateaus longer ( i.e. 15 – 20 min) to ensure the oven controller does not change temperature too soon.
+11.	Set the thermal plate temperature to 71°C.
+12.	Verify DUT temperature stabilization at 71°C.
+13.	TVAC Temperature profile Step 4 (cycle 1)
+6.	Turn off 28V and dwell for 1 hour
+7.	Unpowered Hot Survival at 71°C for 1 more hour.
+14.	Set the thermal plate temperature to -40°C.
+15.	Verify DUT temperature stabilization at -40°C.
+17.	TVAC Temperature profile Step 5 (cycle 1)
+o	Cold survival at -40°C plateau 
+o	1-hr dwell unpowered
+o	1-hr Cold Survival unpowered
+18.	Set temperature plate to -29°C
+19.	Verify DUT temperature stabilization at -29°C.
+20.	TVAC Temperature profile Step 6 (cycle 1)
+o	Functional tests and characterization data at -29°C plateau (28V)
+o	1-hr dwell unpowered
+o	Apply 28V to DUT and perform Cold Start test
+o	Functional tests
+	RF output with -10 dBm input (CW input) in High Gain state (each band)
+	Command & response, operating modes, RF output stabilization
+	Power consumption (each band)
+	Voltage and temperature telemetry with timestamps
+o	2-hr soak powered-on (DUT remains on until the end of step 8).
+21.	Set the thermal plate temperature to -13°C.
+22.	Verify DUT temperature stabilization at -13°C.
+23.	TVAC Temperature profile Step 7 (cycle 1)
+o	Performance tests and characterization data at -13°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+24.	TVAC Temperature profile Step 8 (cycle 2-3)
+o	Functional tests and characterization data in Intermediate cycles 2-3 (28V)
+o	The profile of Protoqual TVAC cycles 1-4 is shown in Figure 18.
+	Temperature plateaus of -29°C and 66°C
+	Ramp rate of 4°C/min
+	After DUT temperature stabilization, complete 1-hour dwell + 1-hour soak at each plateau
+o	This section of the test will utilize an ATE setup to log RF and DC data through the duration of the cycles.  It will also send commands and receive telemetry data from the DUT.
+o	Program the TVAC chamber to the profile shown for cycles 2 and 3 in Figure 18.
+o	Run the temperature profile of the TVAC chamber.
+o	The ATE software will perform the following steps continuously through the  entire TVAC cycle profile:
+	Set the gain to high gain state
+	Log Pin and Pout CW data for each amplifier module at high-gain state
+	Log DC power consumption for each band 
+	Query and log voltage and temperature telemetry with timestamps
+	Apply +28V to DUT for all TVAC cycles
+	Switch bands every 10 minutes and continuously log data
+25.	 Set the thermal plate temperature to 66°C.
+26.	Verify DUT temperature stabilization at 66°C.
+27.	Remove 28V and dwell for 1 hour.
+28.	TVAC Temperature profile Step 9 (cycle 4)
+o	Functional tests and characterization data at 66°C plateau (28V)
+o	Apply 28V and perform Hot Start test at 66°C
+o	Functional tests
+	RF output with -10 dBm input (CW input) in High Gain state (each band)
+	Command & response, operating modes, RF output stabilization
+	Power consumption (each band)
+	Voltage and temperature telemetry with timestamps
+o	2-hr soak powered-on
+o	Turn off DUT after 2 hr soak.  
+29.	Set the thermal plate temperature to 50°C.
+30.	Verify DUT temperature stabilization at 50°C.
+31.	TVAC Temperature profile Step 10 (cycle 4)
+o	Performance tests and characterization data at 50°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+32.	Turn off DUT
+33.	Set the thermal plate temperature to -29°C.
+34.	Verify DUT temperature stabilization at -29°C.
+35.	TVAC Temperature profile Step 11 (cycle 4)
+o	Functional tests and characterization data at -29°C plateau (28V)
+o	1-hr dwell unpowered
+o	Apply 28V and perform Cold Start test
+o	Functional tests
+	RF output with -10 dBm input (CW input) in High Gain state (each band)
+	Command & response, operating modes, RF output stabilization
+	Power consumption (each band)
+	Voltage and temperature telemetry with timestamps
+o	2-hr soak powered-on
+36.	Set the thermal plate temperature to -13°C.
+37.	Verify DUT temperature stabilization at -13°C.
+38.	TVAC Temperature profile Step 12 (cycle 4)
+o	Performance tests and characterization data at -13°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+39.	Set the thermal plate temperature to 25°C.
+40.	Verify DUT temperature stabilization at 25°C.
+41.	TVAC Temperature profile Step 13 (cycle 4)
+o	Performance tests and characterization data at 25°C plateau  
+o	Dwell for 1 hour
+o	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+o	Maximum gain in Low Gain state (each band)
+o	Spectral Emissions (each band)
+o	Gain and phase characterization data for each attenuator setting (each band)
+o	Input/output VSWR (each band)
+o	Command & response, operating modes, RF output stabilization
+o	Power consumption (each band)
+o	Voltage and temperature telemetry with timestamps
+42.	TVAC Temperature profile Step 14 
+o	Ramp up to 50°C and soak for 30 min (bake-out) 
+43.	TVAC Temperature profile Step 15
+o	Ramp down to 25°C
+43.	Perform a post-TVAC RF test outlined in the Aldetec document F658-TEST Lynx Top Level Test Flight Traveler.
+44.	Submit pre and post Thermal/TVAC temperature cycle test data to engineering for review.
+45.	Sign off on Thermal/TVAC temperature cycle test completion in the Aldetec document F658-TEST Lynx Top Level Test Flight Traveler.
+
+Acceptance (Flight-2) Unit_Thermal Cycle:
+
+At all Performance temperatures during Acceptance Thermal Cycle, these parameters will be measured:
+•	RF output with -10 dBm input (OQPSK waveform) in High Gain state (each band)
+•	Maximum gain in Low Gain state (each band)
+•	Spectral Emissions (each band)
+o	OQPSK spectral mask, for max gain and min gain
+o	Spurious emissions and harmonics
+•	Gain and phase characterization data for each attenuator setting (each band)
+o	Gain variation
+o	Differential gain (H / V)
+o	Differential phase (H/V)
+•	Input/output VSWR (each band)
+•	Command & response, operating modes, RF output stabilization
+•	Power consumption (each band)
+•	Voltage and temperature telemetry with timestamps  
+
+At all Functional temperatures during Acceptance Thermal Cycle, these parameters will be measured:
+•	RF output power with -10 dBm input (CW tone) in High Gain state (each band)
+o	DC power consumption
+•	Control and telemetry 
+•	Run ATE software to log voltage and temperature telemetry during tests.
