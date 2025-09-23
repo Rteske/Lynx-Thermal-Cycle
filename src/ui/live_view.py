@@ -46,7 +46,7 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.plot = pg.PlotWidget(background='k')
             self.plot.addLegend()
             self.plot.setLabel('bottom', 'Time', 's')
-            self.plot.setLabel('left', 'Temperature (C) / PSU')
+            self.plot.setLabel('left', 'Temperature (C) / PSU / Pressure')
             layout.addWidget(self.plot)
 
             self.curve_actual = self.plot.plot(pen=pg.mkPen('y', width=2), name='Actual Temp')
@@ -56,6 +56,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.curve_c = self.plot.plot(pen=pg.mkPen('r', width=1), name='PSU A')
             self.curve_tc1 = self.plot.plot(pen=pg.mkPen(color=(255, 165, 0), width=1), name='TC1 C')
             self.curve_tc2 = self.plot.plot(pen=pg.mkPen(color=(173, 216, 230), width=1), name='TC2 C')
+            self.curve_pressure = self.plot.plot(pen=pg.mkPen(color=(255, 20, 147), width=2), name='Pressure')
+            self.curve_pressure_setpoint = self.plot.plot(pen=pg.mkPen(color=(138, 43, 226), style=QtCore.Qt.DotLine), name='Pressure SP')
 
             # Log viewer
             self.log_view = QTextEditLogger(self)
@@ -80,6 +82,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.c: List[Optional[float]] = []
             self.tc1: List[Optional[float]] = []
             self.tc2: List[Optional[float]] = []
+            self.pressure: List[Optional[float]] = []
+            self.pressure_setpoint: List[Optional[float]] = []
 
             # Telemetry signal model
             self.model = LiveTelemetryModel()
@@ -119,14 +123,14 @@ def run_gui():  # pragma: no cover - convenience entrypoint
                     # try ISO8601 first
                     try:
                         return dt.datetime.fromisoformat(ts_val)
-                    except Exception:
+                    except ValueError:
                         # common fallback: parse 'YYYY-MM-DD HH:MM:SS' (no timezone)
                         try:
                             return dt.datetime.strptime(ts_val, "%Y-%m-%d %H:%M:%S")
-                        except Exception:
+                        except ValueError:
                             # give up, return now
                             return dt.datetime.now()
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 pass
             return dt.datetime.now()
 
@@ -160,6 +164,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.c.append(to_num(self._first(payload, 'psu_current', 'psu_i', 'current')))
             self.tc1.append(to_num(self._first(payload, 'tc1_temp', 'tc1_c', 'tc_1_c')))
             self.tc2.append(to_num(self._first(payload, 'tc2_temp', 'tc2_c', 'tc_2_c')))
+            self.pressure.append(to_num(self._first(payload, 'pressure', 'current_pressure', 'pressure_torr')))
+            self.pressure_setpoint.append(to_num(self._first(payload, 'pressure_setpoint', 'pressure_sp', 'target_pressure')))
 
             # Update curves with non-None filtering
             def clean(data):
@@ -172,6 +178,8 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.curve_c.setData(self.t, clean(self.c))
             self.curve_tc1.setData(self.t, clean(self.tc1))
             self.curve_tc2.setData(self.t, clean(self.tc2))
+            self.curve_pressure.setData(self.t, clean(self.pressure))
+            self.curve_pressure_setpoint.setData(self.t, clean(self.pressure_setpoint))
 
             # Status text
             phase = self._first(payload, 'phase', 'test_phase') or ''

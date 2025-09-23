@@ -647,7 +647,7 @@ class AutoExplor:
         return temp_readouts
     
     def get_pressure_readings(self, device_mask=None):
-        pass
+        return self.get_setpoint_info(SetpointID.PRESSURE_CONTROL)
 
     # --- Device Control Methods ---
     def get_device_name(self, device_id):
