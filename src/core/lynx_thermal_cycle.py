@@ -255,6 +255,7 @@ class LynxThermalCycleManager:
             return
         try:
             # Set the target value for the pressure setpoint
+            status, _ = self.tvac_controller.set_setpoint_mode(self.pressure_setpoint_id, "vent")
             status, _ = self.tvac_controller.set_setpoint_target_value(self.pressure_setpoint_id, pressure_torr)
             if status == AutoExplorStatus.SUCCESS.value:
                 # Enable the pressure setpoint controller
@@ -273,11 +274,6 @@ class LynxThermalCycleManager:
         if self.tvac_controller is None:
             return None
         try:
-            # Try to read from pressure readout first
-            status, pressure_value = self.tvac_controller.get_readout_process_value(ReadoutID.PRESSURE)
-            if status == AutoExplorStatus.SUCCESS.value and pressure_value is not None:
-                return float(pressure_value)
-            
             # Fallback: try to read process value from the pressure setpoint controller itself
             status, process_value = self.tvac_controller.get_setpoint_process_value(self.pressure_setpoint_id)
             if status == AutoExplorStatus.SUCCESS.value and process_value is not None:
@@ -293,6 +289,7 @@ class LynxThermalCycleManager:
             return None
         try:
             status, target_value = self.tvac_controller.get_setpoint_target_value(self.pressure_setpoint_id)
+            self.tvac_controller.set_button_state(ButtonID.HIGH_VAC, True)  # Ensure vent button is active
             if status == AutoExplorStatus.SUCCESS.value and target_value is not None:
                 return float(target_value)
         except (OSError, ValueError):
@@ -1065,6 +1062,8 @@ class LynxThermalCycleManager:
                         "psu_output": bool(out) if out is not None else None,
                         "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
                         "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
+                        "pressure_torr": float(pressure_actual) if isinstance(pressure_actual, (int, float)) else None,
+                        "pressure_setpoint": float(pressure_setpoint) if isinstance(pressure_setpoint, (int, float)) else None,
                         "tests_pin_pout_functional": bool(pin_pout_functional) if pin_pout_functional is not None else None,
                         "tests_sig_a_performance": bool(sig_a_performance) if sig_a_performance is not None else None,
                         "tests_na_performance": bool(na_performance) if na_performance is not None else None,

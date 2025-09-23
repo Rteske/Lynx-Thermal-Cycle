@@ -47,6 +47,7 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.plot.addLegend()
             self.plot.setLabel('bottom', 'Time', 's')
             self.plot.setLabel('left', 'Temperature (C) / PSU / Pressure')
+            self.plot.setYRange(-50, 100)
             layout.addWidget(self.plot)
 
             self.curve_actual = self.plot.plot(pen=pg.mkPen('y', width=2), name='Actual Temp')
