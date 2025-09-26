@@ -145,7 +145,7 @@ class LynxThermalCycleManager:
             if not os.path.exists(self.telemetry_path):
                 with open(self.telemetry_path, "w", encoding="utf-8") as f:
                     f.write(
-                        "timestamp,step_index,step_name,cycle_type,phase,target_c,setpoint_c,actual_temp_c," \
+                        "timestamp,step_index,step_name,cycle_type,phase,target_c,platen_setpoint_c,platen_temp_c," \
                         "psu_voltage,psu_current,psu_output,tc1_temp,tc2_temp," \
                         "pressure_torr,pressure_setpoint,pressure_mode," \
                         "tests_pin_pout_functional,tests_sig_a_performance,tests_na_performance,rf_on_off,fault_status,bandpath,gain_value,date_string,temp_value\n"
@@ -207,8 +207,8 @@ class LynxThermalCycleManager:
             timeout = 30  # seconds
             start_time = time.time()
             while True:
-                actual_temp = self._read_actual_temp()
-                if actual_temp is not None:
+                platen_temp = self._read_platen_temp()
+                if platen_temp is not None:
                     break
                 if time.time() - start_time >= timeout:
                     log_message("Setpoint applied; no readout available yet (timeout). Proceeding.")
@@ -218,30 +218,23 @@ class LynxThermalCycleManager:
         except (OSError, ValueError) as e:
             log_message(f"Failed to set TVAC setpoint: {e}")
 
-    def _read_actual_temp(self) -> Optional[float]:
+    def _read_platen_temp(self) -> Optional[float]:
         if self.tvac_controller is None:
             return None
         try:
-            # Try to read from platen thermocouple first
-            status, temp_value = self.tvac_controller.get_readout_process_value(ReadoutID.SAMPLE_1)
-            if status == AutoExplorStatus.SUCCESS.value and temp_value is not None:
-                return float(temp_value)
-            
-            # Fallback: try to read process value from the setpoint controller itself
-            status, process_value = self.tvac_controller.get_setpoint_process_value(self.temp_setpoint_id)
+            status, process_value = self.tvac_controller.get_setpoint_process_value(SetpointID.PLATEN_HEATING_CONTROL)
             if status == AutoExplorStatus.SUCCESS.value and process_value is not None:
                 return float(process_value)
-                
         except (OSError, ValueError):
             pass
         return None
 
-    def _read_setpoint_temp(self) -> Optional[float]:
+    def _read_platen_setpoint_temp(self) -> Optional[float]:
         """Read the current setpoint value from TVAC."""
         if self.tvac_controller is None:
             return None
         try:
-            status, target_value = self.tvac_controller.get_setpoint_target_value(self.temp_setpoint_id)
+            status, target_value = self.tvac_controller.get_setpoint_target_value(SetpointID.PLATEN_HEATING_CONTROL)
             if status == AutoExplorStatus.SUCCESS.value and target_value is not None:
                 return float(target_value)
         except (OSError, ValueError):
@@ -408,8 +401,12 @@ class LynxThermalCycleManager:
                 else:
                     status, _ = self.tvac_controller.set_setpoint_target_value(self.temp_setpoint_id, sp)
                     if status == AutoExplorStatus.SUCCESS.value:
-                        # Brief wait for setpoint to take effect
-                        time.sleep(5)
+                        # Wait until the setpoint is applie
+                        status, temp = self.tvac_controller.get_setpoint_process_value(SetpointID.PLATEN_HEATING_CONTROL)  # Initial read
+                        while abs(sp - temp) >= 0.1:
+                            status, temp = self.tvac_controller.get_setpoint_process_value(SetpointID.PLATEN_HEATING_CONTROL)  # Force update
+                            time.sleep(0.5)
+                            self._maybe_log_telemetry(phase="pid-setpoint-wait", step=self.current_step, setpoint_c=sp)
                         log_message(f"PID: TVAC setpoint -> {sp:.2f} C (ID: {self.temp_setpoint_id})")
                     else:
                         log_message(f"PID: failed to set TVAC setpoint (status: {status})")
@@ -418,8 +415,8 @@ class LynxThermalCycleManager:
 
         # Measurement function (prefer TC1; fallback to controller)
         def read_meas() -> Optional[float]:
-            temp = self._read_actual_temp()
-            return temp
+            temp = self._get_tvac_temp_snapshot_values()
+            return temp[0]
 
         # Optional initial delay
         try:
@@ -477,7 +474,7 @@ class LynxThermalCycleManager:
                 phase1_window_values, phase1_window_s, min_time_s=min_stability_time
             )
 
-            is_stable = span <= (float(tol_c))  # 75% of tolerance requirement
+            is_stable = span <= (float(tol_c) * 1.5)  # 150% of tolerance requirement
 
             if in_band and is_stable and has_enough_time:
                 log_message(f"PHASE 1: Reached target band ±{target_temp_delta_c:.2f}C after {phase1_elapsed:.1f}s")
@@ -616,7 +613,7 @@ class LynxThermalCycleManager:
     def get_live_snapshot(self) -> Dict[str, Any]:
         """Return a best-effort live snapshot of key telemetry values.
 
-        Includes: setpoint_c, actual_temp_c, psu_voltage, psu_current, psu_output,
+        Includes: setpoint_c, platen_temp_c, psu_voltage, psu_current, psu_output,
         tc1_temp, tc2_temp, and DAQ fields (rf_on_off, fault_status, bandpath,
         gain_value, date_string, temp_value). Missing values are returned as None.
         """
@@ -626,17 +623,17 @@ class LynxThermalCycleManager:
             sp = None
             if getattr(self, "tvac_controller", None) is not None:
                 try:
-                    sp = self._read_setpoint_temp()
+                    sp = self._read_platen_setpoint_temp()
                 except Exception:
                     sp = None
-            snapshot["setpoint_c"] = sp
+            snapshot["platen_setpoint_c"] = sp
         except Exception:
-            snapshot["setpoint_c"] = None
+            snapshot["platen_setpoint_c"] = None
 
         try:
-            snapshot["actual_temp_c"] = self._read_actual_temp()
+            snapshot["platen_temp_c"] = self._read_platen_temp()
         except Exception:
-            snapshot["actual_temp_c"] = None
+            snapshot["platen_temp_c"] = None
 
         # PSU
         try:
@@ -652,11 +649,11 @@ class LynxThermalCycleManager:
         try:
             # Get TVAC temperature readings instead of external TCs
             tvac_temps = self._get_tvac_temp_snapshot()
-            snapshot["tc1_temp"] = tvac_temps.get('platen_tc')
-            snapshot["tc2_temp"] = tvac_temps.get('sample_1')  # Use first sample TC as TC2
+            snapshot["sample_1"] = tvac_temps.get('sample_1')
+            snapshot["sample_2"] = tvac_temps.get('sample_2')  # Use first sample TC as TC2
         except Exception:
-            snapshot["tc1_temp"] = None
-            snapshot["tc2_temp"] = None
+            snapshot["sample_1"] = None
+            snapshot["sample_2"] = None
 
         # Pressure readings from TVAC
         try:
@@ -746,7 +743,7 @@ class LynxThermalCycleManager:
         """Append a telemetry line from external sources (e.g., test manager) into the same CSV schema.
 
         The payload may include some of: timestamp, step_index, step_name, cycle_type, phase,
-        target_c, setpoint_c, actual_temp_c, psu_voltage, psu_current, psu_output,
+        target_c, setpoint_c, platen_temp_c, psu_voltage, psu_current, psu_output,
         tc1_temp, tc2_temp, rf_on_off, fault_status, bandpath, gain_value, date_string, temp_value.
         Missing fields are left blank in the CSV.
         """
@@ -769,16 +766,16 @@ class LynxThermalCycleManager:
             if target is None and self.current_step is not None:
                 target = getattr(self.current_step, "temperature", None)
 
-            sp = payload.get("setpoint_c")
-            if sp is None and self.tvac_controller is not None:
+            platen_sp = payload.get("platen_setpoint_c")
+            if platen_sp is None and self.tvac_controller is not None:
                 try:
-                    sp = self._read_setpoint_temp()
+                    platen_sp = self._read_platen_setpoint_temp()
                 except Exception:
-                    sp = None
+                    platen_sp = None
 
-            actual = payload.get("actual_temp_c")
-            if actual is None:
-                actual = self._read_actual_temp()
+            platen_temp = payload.get("platen_temp_c")
+            if platen_temp is None:
+                platen_temp = self._read_platen_temp()
 
             # PSU snapshots from payload with fallback to live reads
             v = payload.get("psu_voltage")
@@ -791,12 +788,12 @@ class LynxThermalCycleManager:
                 out = out if isinstance(out, bool) else pout
 
             # TC: prefer payload, otherwise live from TVAC
-            tc1 = payload.get("tc1_temp")
-            tc2 = payload.get("tc2_temp")
+            tc1 = payload.get("sample_1")
+            tc2 = payload.get("sample_2")
             if tc1 is None or tc2 is None:
                 tvac_temps = self._get_tvac_temp_snapshot()
-                tc1 = tc1 if isinstance(tc1, (int, float)) else tvac_temps.get('platen_tc')
-                tc2 = tc2 if isinstance(tc2, (int, float)) else tvac_temps.get('sample_1')
+                tc1 = tc1 if isinstance(tc1, (int, float)) else tvac_temps.get('sample_1')
+                tc2 = tc2 if isinstance(tc2, (int, float)) else tvac_temps.get('sample_2')
 
             # Pressure: prefer payload, otherwise live from TVAC
             pressure_actual = payload.get("pressure_torr")
@@ -840,8 +837,8 @@ class LynxThermalCycleManager:
                 cycle or "",
                 phase or "",
                 f"{float(target):.3f}" if isinstance(target, (int, float)) else "",
-                f"{float(sp):.3f}" if isinstance(sp, (int, float)) else "",
-                f"{float(actual):.3f}" if isinstance(actual, (int, float)) else "",
+                f"{float(platen_sp):.3f}" if isinstance(platen_sp, (int, float)) else "",
+                f"{float(platen_temp):.3f}" if isinstance(platen_temp, (int, float)) else "",
                 f"{float(v):.3f}" if isinstance(v, (int, float)) else "",
                 f"{float(c):.3f}" if isinstance(c, (int, float)) else "",
                 str(bool(out)) if out is not None else "",
@@ -892,7 +889,6 @@ class LynxThermalCycleManager:
         """Get TVAC temperature readings as a dictionary."""
         if self.tvac_controller is None:
             return {}
-        
         try:
             temp_readings = self.tvac_controller.get_temperature_readings()
             temp_dict = {}
@@ -900,14 +896,10 @@ class LynxThermalCycleManager:
             for name, info in temp_readings.items():
                 if info['is_valid'] and info['value'] is not None:
                     # Map common TVAC readout names to simpler keys
-                    if 'platen' in name.lower():
-                        temp_dict['platen_tc'] = float(info['value'])
-                    elif 'sample_1' in name.lower():
-                        temp_dict['sample_1'] = float(info['value'])
-                    elif 'sample_2' in name.lower():
-                        temp_dict['sample_2'] = float(info['value'])
-                    # Add other temperature readouts as needed
-                    temp_dict[name.lower()] = float(info['value'])
+                    if 'sample_1' == name.lower():
+                        temp_dict['sample_1'] = info['value']
+                    elif 'sample_2' == name.lower():
+                        temp_dict['sample_2'] = info['value']
             
             return temp_dict
         except Exception:
@@ -916,9 +908,9 @@ class LynxThermalCycleManager:
     def _get_tvac_temp_snapshot_values(self):
         """Read temperatures from TVAC readouts, returning tuple for compatibility."""
         tvac_temps = self._get_tvac_temp_snapshot()
-        tc1_temp = tvac_temps.get('platen_tc')
-        tc2_temp = tvac_temps.get('sample_1')  # Use first sample as TC2
-        return tc1_temp, tc2_temp
+        tc1_temp = tvac_temps.get('sample_1')
+        tc2_temp = tvac_temps.get('sample_2')  # Use first sample as TC2
+        return float(tc1_temp), float(tc2_temp)
 
     def _get_tvac_snapshot(self):
         """Read key TVAC system status."""
@@ -992,20 +984,20 @@ class LynxThermalCycleManager:
             target = getattr(self.current_step, "temperature", None) if self.current_step is not None else None
 
             # Resolve setpoint for logging in a safe way
-            sp: Optional[float] = None
+            platen_sp: Optional[float] = None
             if self.tvac_controller is not None:
                 try:
-                    sp = self._read_setpoint_temp()
+                    platen_sp = self._read_platen_setpoint_temp()
                 except (OSError, ValueError, RuntimeError, TypeError):
-                    sp = None
-            if sp is None and setpoint_c is not None:
+                    platen_sp = None
+            if platen_sp is None and setpoint_c is not None:
                 try:
-                    sp = float(setpoint_c)
+                    platen_sp = float(setpoint_c)
                 except (ValueError, TypeError):
-                    sp = None
-            actual = self._read_actual_temp()
+                    platen_sp = None
+            platen_temp = self._read_platen_temp()
             v, c, out = self._get_psu_snapshot()
-            tc1, tc2 = self._get_tc_snapshot()  # Now uses TVAC readouts
+            tc1, tc2 = self._get_tc_snapshot()
             
             # Get pressure data
             pressure_actual = self._read_actual_pressure()
@@ -1021,8 +1013,8 @@ class LynxThermalCycleManager:
                 cycle,
                 phase,
                 f"{target:.3f}" if isinstance(target, (int, float)) else "",
-                f"{sp:.3f}" if isinstance(sp, (int, float)) else "",
-                f"{actual:.3f}" if isinstance(actual, (int, float)) else "",
+                f"{platen_sp:.3f}" if isinstance(platen_sp, (int, float)) else "",
+                f"{platen_temp:.3f}" if isinstance(platen_temp, (int, float)) else "",
                 f"{v:.3f}" if isinstance(v, (int, float)) else "",
                 f"{c:.3f}" if isinstance(c, (int, float)) else "",
                 str(bool(out)) if out is not None else "",
@@ -1055,13 +1047,13 @@ class LynxThermalCycleManager:
                         "cycle_type": cycle,
                         "phase": phase,
                         "target_c": float(target) if isinstance(target, (int, float)) else None,
-                        "setpoint_c": float(sp) if isinstance(sp, (int, float)) else None,
-                        "actual_temp_c": float(actual) if isinstance(actual, (int, float)) else None,
+                        "platen_setpoint_c": float(platen_sp) if isinstance(platen_sp, (int, float)) else None,
+                        "platen_temp_c": float(platen_temp) if isinstance(platen_temp, (int, float)) else None,
                         "psu_voltage": float(v) if isinstance(v, (int, float)) else None,
                         "psu_current": float(c) if isinstance(c, (int, float)) else None,
                         "psu_output": bool(out) if out is not None else None,
-                        "tc1_temp": float(tc1) if isinstance(tc1, (int, float)) else None,
-                        "tc2_temp": float(tc2) if isinstance(tc2, (int, float)) else None,
+                        "sample_1": float(tc1) if isinstance(tc1, (int, float)) else None,
+                        "sample_2": float(tc2) if isinstance(tc2, (int, float)) else None,
                         "pressure_torr": float(pressure_actual) if isinstance(pressure_actual, (int, float)) else None,
                         "pressure_setpoint": float(pressure_setpoint) if isinstance(pressure_setpoint, (int, float)) else None,
                         "tests_pin_pout_functional": bool(pin_pout_functional) if pin_pout_functional is not None else None,

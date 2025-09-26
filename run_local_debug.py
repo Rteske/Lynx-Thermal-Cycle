@@ -24,7 +24,7 @@ switch.reset_all_switches()
 
 power_supply.set_voltage(28)
 power_supply.set_current(2.5)
-power_supply.set_output_state(True)
+power_supply.set_output_state(False)
 
 
 voltage = power_supply.get_voltage()

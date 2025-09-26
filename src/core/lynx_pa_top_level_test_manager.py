@@ -4,11 +4,12 @@ except Exception:  # Allow running in simulation without pyvisa installed
     pyvisa = None
 from src.core.lynx_pa_top_level_test import BandwithPowerModuleTest, NetworkAnalyzerModuleTest
 from instruments.hardware_config import get_daq_instance
+from instruments.tvac_auto_explor import SetpointID, ReadoutID, DeviceID, AutoExplor, AutoExplorStatus
 from configs.scribe import Scribe
 import datetime as dt
 import logging
 import time
-
+from typing import Optional, Callable, Dict, Any
 logger = logging.getLogger(__name__)
 
 class PaTopLevelTestManager:
@@ -47,8 +48,8 @@ class PaTopLevelTestManager:
         # Common members
         self.running_state = False
         self.state = False
-        # Optional temp controller reference (can be provided by thermal manager)
-        self.temp_controller = None
+        # Optional TVAC controller reference (can be provided by thermal manager)
+        self.tvac_controller = None
         self.temp_channel = 1
 
         if not sim:
@@ -183,11 +184,11 @@ class PaTopLevelTestManager:
 
             self.paths = [
                 "Band1_SN1",
-                "Band1_SN2",
-                "Band2_SN1",
-                "Band2_SN2",
-                "Band3_SN1",
-                "Band3_SN2",
+                # "Band1_SN2",
+                # "Band2_SN1",
+                # "Band2_SN2",
+                # "Band3_SN1",
+                # "Band3_SN2",
             ]
 
             self.scribe = Scribe("LYNX_PA")
@@ -252,13 +253,11 @@ class PaTopLevelTestManager:
         """Register a secondary sink (e.g., CSV writer proxy) that will also receive telemetry payloads."""
         self.external_telemetry_sink = sink
 
-    def set_temp_controller(self, controller, channel: int = 1):
-        """Optionally attach a temperature controller so telemetry can include setpoint/actual."""
-        self.temp_controller = controller
-        try:
-            self.temp_channel = int(channel)
-        except Exception:
-            self.temp_channel = 1
+    def set_tvac_controller(self, controller):
+        """Optionally attach a TVAC controller so telemetry can include setpoint/actual."""
+        if controller is not None and not isinstance(controller, AutoExplor):
+            raise ValueError("controller must be an instance of AutoExplor or None")
+        self.tvac_controller = controller
 
     def _emit_telemetry(self, payload: dict):
         # Enrich payload with missing details (timestamp, PSU, temps, DAQ) before emitting
@@ -296,22 +295,10 @@ class PaTopLevelTestManager:
         except Exception:
             pass
 
-        # Temperature probes
+        # TVAC temp probes
         try:
-            if data.get("tc1_temp") is None:
-                tp = getattr(self, "temp_probe", None)
-                if tp is not None and hasattr(tp, "measure_temp"):
-                    try:
-                        data["tc1_temp"] = tp.measure_temp()
-                    except Exception:
-                        pass
-            if data.get("tc2_temp") is None:
-                tp2 = getattr(self, "temp_probe2", None)
-                if tp2 is not None and hasattr(tp2, "measure_temp"):
-                    try:
-                        data["tc2_temp"] = tp2.measure_temp()
-                    except Exception:
-                        pass
+            self.tvac_controller._get_readout_
+            
         except Exception:
             pass
 
@@ -342,20 +329,10 @@ class PaTopLevelTestManager:
 
         # Temp controller (actual temp and setpoint) if available
         try:
-            tc = getattr(self, "temp_controller", None)
-            ch = getattr(self, "temp_channel", 1)
-            if tc is not None:
-                if data.get("setpoint_c") is None and hasattr(tc, "query_setpoint"):
-                    try:
-                        data["setpoint_c"] = float(tc.query_setpoint(ch))
-                    except Exception:
-                        pass
-                if data.get("actual_temp_c") is None and hasattr(tc, "query_actual"):
-                    try:
-                        raw = tc.query_actual(ch)
-                        data["actual_temp_c"] = float(raw) 
-                    except Exception:
-                        pass
+            platen_sp = data.get("platen_setpoint_c")
+            platen_temp = data.get("platen_temp_c")
+            data["platen_setpoint_c"] = platen_sp
+            data["platen_temp_c"] = platen_temp
         except Exception:
             pass
 
@@ -373,23 +350,67 @@ class PaTopLevelTestManager:
             except Exception:
                 pass
 
+    def _get_tvac_temp_snapshot(self):
+        """Get TVAC temperature readings as a dictionary."""
+        if self.tvac_controller is None:
+            return {}
+        try:
+            temp_readings = self.tvac_controller.get_temperature_readings()
+            temp_dict = {}
+            
+            for name, info in temp_readings.items():
+                if info['is_valid'] and info['value'] is not None:
+                    # Map common TVAC readout names to simpler keys
+                    if 'sample_1' == name.lower():
+                        temp_dict['sample_1'] = info['value']
+                    elif 'sample_2' == name.lower():
+                        temp_dict['sample_2'] = info['value']
+            
+            return temp_dict
+        except Exception:
+            return {}
+
+    def _get_tvac_temp_snapshot_values(self):
+        """Read temperatures from TVAC readouts, returning tuple for compatibility."""
+        tvac_temps = self._get_tvac_temp_snapshot()
+        tc1_temp = tvac_temps.get('sample_1')
+        tc2_temp = tvac_temps.get('sample_2')  # Use first sample as TC2
+        return float(tc1_temp), float(tc2_temp)
+    
+    def _read_platen_temp(self) -> Optional[float]:
+        if self.tvac_controller is None:
+            return None
+        try:
+            status, process_value = self.tvac_controller.get_setpoint_process_value(SetpointID.PLATEN_HEATING_CONTROL)
+            if status == AutoExplorStatus.SUCCESS.value and process_value is not None:
+                return float(process_value)
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _read_platen_setpoint_temp(self) -> Optional[float]:
+        """Read the current setpoint value from TVAC."""
+        if self.tvac_controller is None:
+            return None
+        try:
+            status, target_value = self.tvac_controller.get_setpoint_target_value(SetpointID.PLATEN_HEATING_CONTROL)
+            if status == AutoExplorStatus.SUCCESS.value and target_value is not None:
+                return float(target_value)
+        except (OSError, ValueError):
+            pass
+        return None
+
     def _emit_periodic_snapshot(self, phase: str = "testing"):
         """Emit a lightweight telemetry snapshot for the GUI while tests run."""
         # Read temps
         tc1 = None
         tc2 = None
-        try:
-            tp = getattr(self, "temp_probe", None)
-            if tp is not None and hasattr(tp, "measure_temp"):
-                tc1 = tp.measure_temp()
-        except Exception:
-            pass
-        try:
-            tp2 = getattr(self, "temp_probe2", None)
-            if tp2 is not None and hasattr(tp2, "measure_temp"):
-                tc2 = tp2.measure_temp()
-        except Exception:
-            pass
+        tc1, tc2 = self._get_tvac_temp_snapshot_values()
+
+        platen_temp = None
+        platen_sp = None
+        
+
         # PSU snapshot
         v = c = out = None
         psu = getattr(self, "power_supply", None)

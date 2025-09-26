@@ -50,15 +50,15 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             self.plot.setYRange(-50, 100)
             layout.addWidget(self.plot)
 
-            self.curve_actual = self.plot.plot(pen=pg.mkPen('y', width=2), name='Actual Temp')
+            self.curve_platen_temp = self.plot.plot(pen=pg.mkPen('y', width=2), name='Platen Temp')
             self.curve_target = self.plot.plot(pen=pg.mkPen('c', style=QtCore.Qt.DashLine), name='Target')
-            self.curve_setpoint = self.plot.plot(pen=pg.mkPen('m', style=QtCore.Qt.DotLine), name='Setpoint')
+            self.curve_platen_setpoint = self.plot.plot(pen=pg.mkPen('m', style=QtCore.Qt.DotLine), name='Platen Setpoint')
             self.curve_v = self.plot.plot(pen=pg.mkPen('g', width=1), name='PSU V')
             self.curve_c = self.plot.plot(pen=pg.mkPen('r', width=1), name='PSU A')
             self.curve_tc1 = self.plot.plot(pen=pg.mkPen(color=(255, 165, 0), width=1), name='TC1 C')
             self.curve_tc2 = self.plot.plot(pen=pg.mkPen(color=(173, 216, 230), width=1), name='TC2 C')
             self.curve_pressure = self.plot.plot(pen=pg.mkPen(color=(255, 20, 147), width=2), name='Pressure')
-            self.curve_pressure_setpoint = self.plot.plot(pen=pg.mkPen(color=(138, 43, 226), style=QtCore.Qt.DotLine), name='Pressure SP')
+            self.curve_pressure_setpoint = self.plot.plot(pen=pg.mkPen(color=(138, 43, 226), style=QtCore.Qt.DotLine), name='Pressure Setpoint')
 
             # Log viewer
             self.log_view = QTextEditLogger(self)
@@ -76,9 +76,9 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             # Data storage for plots
             self.t0: Optional[float] = None
             self.t: List[float] = []
-            self.actual: List[Optional[float]] = []
+            self.platen_temp: List[Optional[float]] = []
             self.target: List[Optional[float]] = []
-            self.setpoint: List[Optional[float]] = []
+            self.platen_setpoint: List[Optional[float]] = []
             self.v: List[Optional[float]] = []
             self.c: List[Optional[float]] = []
             self.tc1: List[Optional[float]] = []
@@ -158,13 +158,13 @@ def run_gui():  # pragma: no cover - convenience entrypoint
                 return float(val) if isinstance(val, (int, float)) else None
 
             # Accept a few common aliases for resilience across emitters
-            self.actual.append(to_num(self._first(payload, 'actual_temp_c', 'actual_c', 'controller_actual_c')))
+            self.platen_temp.append(to_num(self._first(payload, 'platen_temp_c', 'actual_c', 'controller_actual_c')))
             self.target.append(to_num(self._first(payload, 'target_c', 'target_temp_c', 'target')))
-            self.setpoint.append(to_num(self._first(payload, 'setpoint_c', 'temp_setpoint_c', 'controller_setpoint_c')))
+            self.platen_setpoint.append(to_num(self._first(payload, 'platen_setpoint_c', 'temp_setpoint_c', 'controller_setpoint_c')))
             self.v.append(to_num(self._first(payload, 'psu_voltage', 'psu_v', 'voltage')))
             self.c.append(to_num(self._first(payload, 'psu_current', 'psu_i', 'current')))
-            self.tc1.append(to_num(self._first(payload, 'tc1_temp', 'tc1_c', 'tc_1_c')))
-            self.tc2.append(to_num(self._first(payload, 'tc2_temp', 'tc2_c', 'tc_2_c')))
+            self.tc1.append(to_num(self._first(payload, 'sample_1', 'tc1_c', 'tc_1_c')))
+            self.tc2.append(to_num(self._first(payload, 'sample_2', 'tc2_c', 'tc_2_c')))
             self.pressure.append(to_num(self._first(payload, 'pressure', 'current_pressure', 'pressure_torr')))
             self.pressure_setpoint.append(to_num(self._first(payload, 'pressure_setpoint', 'pressure_sp', 'target_pressure')))
 
@@ -172,9 +172,9 @@ def run_gui():  # pragma: no cover - convenience entrypoint
             def clean(data):
                 return [x if isinstance(x, (int, float)) else 0 for x in data]
 
-            self.curve_actual.setData(self.t, clean(self.actual))
+            self.curve_platen_temp.setData(self.t, clean(self.platen_temp))
             self.curve_target.setData(self.t, clean(self.target))
-            self.curve_setpoint.setData(self.t, clean(self.setpoint))
+            self.curve_platen_setpoint.setData(self.t, clean(self.platen_setpoint))
             self.curve_v.setData(self.t, clean(self.v))
             self.curve_c.setData(self.t, clean(self.c))
             self.curve_tc1.setData(self.t, clean(self.tc1))

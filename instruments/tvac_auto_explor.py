@@ -1395,15 +1395,7 @@ if __name__ == "__main__":
     for key, value in temp_info['formatted_values'].items():
         print(f"  {key}: {value}")
     
-    auto_explor.set_setpoint_target_value(SetpointID.PLATEN_HEATING_CONTROL, 37.0)
-    auto_explor.set_setpoint_ramp(SetpointID.PLATEN_HEATING_CONTROL, 4.0)
-    auto_explor.set_setpoint_state(SetpointID.PLATEN_HEATING_CONTROL, True)
-    temp_target = auto_explor.get_setpoint_target_value(SetpointID.PLATEN_HEATING_CONTROL)
-    temp_mode = auto_explor.get_setpoint_mode(SetpointID.PLATEN_HEATING_CONTROL)
-    print(f"\nSet Platen Heating Target to {temp_target[1]} and Mode to {temp_mode[1]}")
-
-    process_value = auto_explor.get_setpoint_process_value(SetpointID.PLATEN_HEATING_CONTROL)
-    print(f"Current Platen Heating Process Value: {process_value[1]}")
+    auto_explor.set_button_state(ButtonID.POWER, False)
 #     device_status, device_cfg = auto_explor.get_device_configuration()
 #     print("DeviceConfiguration status:", device_status)
 #     print("DeviceConfiguration:", device_cfg)
