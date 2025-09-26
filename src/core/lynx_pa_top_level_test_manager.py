@@ -182,10 +182,10 @@ class PaTopLevelTestManager:
             self.freqs_and_switchpaths_na_tests = {}
 
             self.paths = [
-                "Band1_SN1",
-                "Band1_SN2",
-                "Band2_SN1",
-                "Band2_SN2",
+                # "Band1_SN1",
+                # "Band1_SN2",
+                # "Band2_SN1",
+                # "Band2_SN2",
                 "Band3_SN1",
                 "Band3_SN2",
             ]
